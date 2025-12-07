@@ -36,7 +36,7 @@ class Pipeline:
         -0.8949,  0.0731,  0.0886,  0.3442, -0.1433, -0.6804,  0.2204,  0.1859,
          0.2702,  0.1699, -0.1443, -0.9614,  0.3261,  0.1718,  0.3545, -0.0686]
     )
-    
+
     def __init__(self, t2s_ref=None, s2a_ref=None, optimize=True, torch_compile=False, device=None, cache_dir=None):
         if device is None: device = inference.get_compute_device()
         self.device = device
@@ -86,9 +86,9 @@ class Pipeline:
         samples = samples[:, :num_frames]
         samples = self.encoder.audio_normalizer(samples[0], sr)
         spk_emb = self.encoder.encode_batch(samples.unsqueeze(0))
-        
+
         return spk_emb[0,0].to(self.device)
-        
+
     def generate_atoks(self, text, speaker=None, lang='en', cps=15, step_callback=None):
         if speaker is None: speaker = self.default_speaker
         elif isinstance(speaker, (str, Path)): speaker = self.extract_spk_emb(speaker)
@@ -96,12 +96,12 @@ class Pipeline:
         stoks = self.t2s.generate(text, cps=cps, lang=lang, step=step_callback)[0]
         atoks = self.s2a.generate(stoks, speaker.unsqueeze(0), step=step_callback)
         return atoks
-        
+
     def generate(self, text, speaker=None, lang='en', cps=15, step_callback=None):
         return self.vocoder.decode(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))
-    
+
     def generate_to_file(self, fname, text, speaker=None, lang='en', cps=15, step_callback=None):
-        self.vocoder.decode_to_file(fname, self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=None))
-        
+        self.vocoder.decode_to_file(fname, self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))
+
     def generate_to_notebook(self, text, speaker=None, lang='en', cps=15, step_callback=None):
-        self.vocoder.decode_to_notebook(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=None))
+        self.vocoder.decode_to_notebook(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))

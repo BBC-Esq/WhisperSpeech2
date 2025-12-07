@@ -255,7 +255,7 @@ class TSARTransformer(nn.Module):
                 setattr(m,bn,b.to(dtype))
 
     def optimize(self, max_batch_size=1, dtype=torch.float16, torch_compile=True):
-        for emb in [self.embeddings.embedding, self.embeddings.embedding]:
+        for emb in [self.encoder.embedding, self.embeddings.embedding]:
             emb.convert_for_eval()
         for l in self.encoder.layers:
             l.attn.convert_for_eval()
