@@ -1,19 +1,19 @@
 '''
 DESCRIPTION~
 
-Enter text to be processed one sentence at a time, add them to a queue to be played, which shortens the wait time for audio to be played..
+Enter text to be processed one sentence at a time, add them to a queue to be played,
+which shortens the wait time for audio to be played.
 
 INSTALLATION INSTRUCTIONS~
-**Tested on Windows
 
-(1)  create a virtual environment and activate it
-(2)  install pytorch by going to the following website and running the appropriate command for your platform and setup:
+(1) Create a virtual environment and activate it
+(2) Install pytorch by going to the following website and running the appropriate command for your platform and setup:
 
 https://pytorch.org/get-started/locally/
 
-(3)  pip3 install WhisperSpeech
-(4)  pip3 install sounddevice==0.4.6 webdataset
-(5)  python gui_text_to_audio_playback.py
+(3) pip install whisperspeech2
+(4) pip install sounddevice
+(5) python gui_text_to_audio_playback.py
 '''
 
 from tkinter import *
@@ -21,30 +21,29 @@ import numpy as np
 import re
 import threading
 import queue
-from whisperspeech.pipeline import Pipeline
+from whisperspeech2.pipeline import Pipeline
 import sounddevice as sd
 
-# uncomment the model you want to use
-# model_ref = 'collabora/whisperspeech:s2a-q4-small-en+pl.model'
+# Uncomment the line for the model you want to use
 # model_ref = 'collabora/whisperspeech:s2a-q4-tiny-en+pl.model'
 model_ref = 'collabora/whisperspeech:s2a-q4-base-en+pl.model'
+# model_ref = 'collabora/whisperspeech:s2a-q4-small-en+pl.model'
 
 pipe = Pipeline(s2a_ref=model_ref)
 
-# Queue to hold audio data
 audio_queue = queue.Queue()
 
 def process_text_to_audio(sentences, pipe):
-    for sentence in sentences:  # Iterate through each sentence
-        if sentence:  # Ensure the sentence is not empty
-            audio_tensor = pipe.generate(sentence)  # Generate audio tensor for the sentence
-            audio_np = (audio_tensor.cpu().numpy() * 32767).astype(np.int16)  # Convert tensor to numpy array, scale, and cast to int16
-            if len(audio_np.shape) == 1:  # Check if the numpy array is 1D
-                audio_np = np.expand_dims(audio_np, axis=0)  # Add a new dimension to make it 2D
+    for sentence in sentences:
+        if sentence:
+            audio_tensor = pipe.generate(sentence)
+            audio_np = (audio_tensor.cpu().numpy() * 32767).astype(np.int16)
+            if len(audio_np.shape) == 1:
+                audio_np = np.expand_dims(audio_np, axis=0)
             else:
-                audio_np = audio_np.T  # Transpose the numpy array if it's not 1D
-            audio_queue.put(audio_np)  # Put the audio numpy array into the queue
-    audio_queue.put(None)  # Signal that processing is complete
+                audio_np = audio_np.T
+            audio_queue.put(audio_np)
+    audio_queue.put(None)
 
 def play_audio_from_queue(audio_queue):
     while True:
