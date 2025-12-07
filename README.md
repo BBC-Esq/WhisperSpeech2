@@ -23,6 +23,14 @@ pipe.generate_to_file('output.wav', "Hello, world!")
 audio = pipe.generate("Hello, world!")
 ```
 
+## Available Models
+
+| Model | Reference |
+|-------|-----------|
+| Tiny | `collabora/whisperspeech:s2a-q4-tiny-en+pl.model` |
+| Base | `collabora/whisperspeech:s2a-q4-base-en+pl.model` |
+| Small | `collabora/whisperspeech:s2a-q4-small-en+pl.model` |
+
 ## Speaker Embedding (Optional)
 
 To use custom speaker embeddings, install the optional dependency:
@@ -66,5 +74,4 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-
 SOFTWARE.
