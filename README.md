@@ -1,4 +1,3 @@
-```markdown
 # WhisperSpeech2
 
 An Open Source text-to-speech system built by inverting Whisper. This is a fork of [WhisperSpeech](https://github.com/collabora/WhisperSpeech) optimized for inference.
@@ -91,3 +90,4 @@ See the `examples/` directory for more usage examples including GUI applications
 
 MIT License
 ```
+
