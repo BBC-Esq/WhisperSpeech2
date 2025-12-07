@@ -342,7 +342,7 @@ class SADelARTransformer(nn.Module):
         return metrics
 
     @classmethod
-    def load_model(cls, ref="collabora/whisperspeech:s2a-q4-small-en+pl.model", spec=None, device=None, cache_dir=None):
+    def load_model(cls, ref="WhisperSpeech/WhisperSpeech:s2a-q4-small-en+pl.model", spec=None, device=None, cache_dir=None):
         spec = inference.load_model(ref=ref, spec=spec, device=device, cache_dir=cache_dir)
         if '_extra_state' not in spec['state_dict'] and 'speaker_map' in spec['config']: spec['state_dict']['_extra_state'] = { 'speaker_map': spec['config']['speaker_map'] }
         model = cls(**spec['config'], tunables=Tunables(**Tunables.upgrade(spec['tunables'])))

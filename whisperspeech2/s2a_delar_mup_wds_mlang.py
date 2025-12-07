@@ -277,7 +277,7 @@ class SADelARTransformer(nn.Module):
         return metrics
 
     @classmethod
-    def load_model(cls, ref="collabora/whisperspeech:s2a-q4-small-en+pl.model",
+    def load_model(cls, ref="WhisperSpeech/WhisperSpeech:s2a-q4-small-en+pl.model",
                    repo_id=None, filename=None, local_filename=None, spec=None, device=None, cache_dir=None):
         if repo_id is None and filename is None and local_filename is None and spec is None:
             if ":" in ref:
