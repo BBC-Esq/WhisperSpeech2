@@ -221,7 +221,7 @@ class TSARTransformer(nn.Module):
         return logits, loss
 
     @classmethod
-    def load_model(cls, ref="collabora/whisperspeech:t2s-small-en+pl.model",
+    def load_model(cls, ref="WhisperSpeech/WhisperSpeech:t2s-small-en+pl.model",
                    repo_id=None, filename=None, local_filename=None, spec=None, device=None, cache_dir=None):
         if repo_id is None and filename is None and local_filename is None and spec is None:
             if ":" in ref:
@@ -255,7 +255,7 @@ class TSARTransformer(nn.Module):
                 setattr(m,bn,b.to(dtype))
 
     def optimize(self, max_batch_size=1, dtype=torch.float16, torch_compile=True):
-        for emb in [self.embeddings.embedding, self.embeddings.embedding]:
+        for emb in [self.encoder.embedding, self.embeddings.embedding]:
             emb.convert_for_eval()
         for l in self.encoder.layers:
             l.attn.convert_for_eval()
