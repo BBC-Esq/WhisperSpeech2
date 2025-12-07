@@ -1,6 +1,6 @@
 # WhisperSpeech2
 
-An Open Source text-to-speech system built by inverting Whisper. This is a fork of [WhisperSpeech](https://github.com/collabora/WhisperSpeech) optimized for inference.  The creators of the original project abandoned it hence this fork.
+An Open Source text-to-speech system built by inverting Whisper. This is a fork of [WhisperSpeech](https://github.com/collabora/WhisperSpeech) optimized for inference.  The creators of the original project abandoned it, hence this fork.
 
 ## Installation
 
@@ -90,5 +90,6 @@ See the `examples/` directory for more usage examples including GUI applications
 
 MIT License
 ```
+
 
 
