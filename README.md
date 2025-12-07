@@ -1,6 +1,6 @@
 # WhisperSpeech2
 
-An Open Source text-to-speech system built by inverting Whisper. This is a fork of [WhisperSpeech](https://github.com/collabora/WhisperSpeech) optimized for inference.
+An Open Source text-to-speech system built by inverting Whisper. This is a fork of [WhisperSpeech](https://github.com/collabora/WhisperSpeech) optimized for inference.  The creators of the original project abandoned it hence this fork.
 
 ## Installation
 
@@ -65,8 +65,8 @@ For more details about each model, visit the [WhisperSpeech Hugging Face reposit
 | **Higher Quality** | s2a-q4-hq-fast | t2s-hq-fast | ~2.1 GB | ~16s |
 
 **Avoid:** Combinations using `s2a-q4-small` or `s2a-v1.1-small` with `t2s-fast-medium` result in high VRAM (~4GB) and slow processing (~42s).
-<img width="3680" height="1800" alt="image" src="https://github.com/user-attachments/assets/2efc192c-2d1a-4f6d-a5fc-91c3783c161e" />
 
+<img width="3680" height="1800" alt="image" src="https://github.com/user-attachments/assets/2efc192c-2d1a-4f6d-a5fc-91c3783c161e" />
 
 ## Speaker Embedding (Optional)
 
@@ -90,4 +90,5 @@ See the `examples/` directory for more usage examples including GUI applications
 
 MIT License
 ```
+
 
