@@ -40,7 +40,10 @@ def multinomial_sample_one_no_sync(probs_sort):
     return torch.argmax(probs_sort / q, dim=-1, keepdim=True).to(dtype=torch.int)
 
 def logits_to_probs(logits, T=1.0, top_k=None):
-    logits = logits / max(T, 1e-5)
+    # Convert T to tensor if needed (required for CUDA graph compatibility)
+    if not isinstance(T, torch.Tensor):
+        T = torch.tensor(T, device=logits.device, dtype=logits.dtype)
+    logits = logits / torch.clamp(T, min=1e-5)
 
     if top_k is not None:
         v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
