@@ -296,20 +296,30 @@ class TSARTransformer(nn.Module):
         self._static_toks = torch.zeros((bs, 1), dtype=torch.long, device=dev)
         self._static_positions = torch.zeros((1,), dtype=torch.long, device=dev)
         self._static_output = torch.zeros((bs, 1), dtype=torch.long, device=dev)
-
+        self._graph_batch_size = bs
+    
     def _capture_cuda_graph(self, cps_emb, xenc, xenc_positions, T, top_k):
+        self._cuda_graph = None
+
         torch.cuda.synchronize()
 
         self._cuda_graph = torch.cuda.CUDAGraph()
+
+        self._graph_cps_emb = cps_emb
+        self._graph_xenc = xenc
+        self._graph_xenc_positions = xenc_positions
+        self._graph_T = T
+        self._graph_top_k = top_k
+
         with torch.cuda.graph(self._cuda_graph):
             self._static_output = self.generate_one(
                 self._static_toks,
                 self._static_positions,
-                cps_emb,
-                xenc,
-                xenc_positions,
-                T,
-                top_k
+                self._graph_cps_emb,
+                self._graph_xenc,
+                self._graph_xenc_positions,
+                self._graph_T,
+                self._graph_top_k
             )
         torch.cuda.synchronize()
 
@@ -324,8 +334,12 @@ class TSARTransformer(nn.Module):
         self._static_toks = None
         self._static_positions = None
         self._static_output = None
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        self._graph_batch_size = None
+        self._graph_cps_emb = None
+        self._graph_xenc = None
+        self._graph_xenc_positions = None
+        self._graph_T = None
+        self._graph_top_k = None
 
     @torch.no_grad()
     def generate(self, txt, cps=15, lang="en", stoks_prompt=None, N=None, bs=1, T=0.7, top_k=None, step=None, show_progress_bar=True):
@@ -383,19 +397,18 @@ class TSARTransformer(nn.Module):
 
         with inference.inference_context():
             if self.use_cuda_graph and dev.type == 'cuda':
-                if self._cuda_graph is None:
+                if self._static_toks is None or self._graph_batch_size != bs:
                     self._init_cuda_graph_buffers(bs, dev)
-                    capture_pos = start + 1
-                    self._static_toks.copy_(toks[:, capture_pos:capture_pos+1])
-                    self._static_positions.copy_(toks_positions[capture_pos:capture_pos+1])
-                    self._capture_cuda_graph(cps_emb, xenc, xenc_positions, T, top_k)
-                    toks[:, capture_pos+1] = self._static_output[:, 0]
-                    captured_start = capture_pos + 1
-                else:
-                    captured_start = start + 1
+
+                capture_pos = start + 1
+                self._static_toks.copy_(toks[:, capture_pos:capture_pos+1])
+                self._static_positions.copy_(toks_positions[capture_pos:capture_pos+1])
+                self._capture_cuda_graph(cps_emb, xenc, xenc_positions, T, top_k)
+                toks[:, capture_pos+1] = self._static_output[:, 0]
+                graph_start = capture_pos + 1
 
                 for i in it:
-                    if i < captured_start:
+                    if i < graph_start:
                         continue
 
                     self._static_toks.copy_(toks[:, i:i+1])
@@ -408,7 +421,6 @@ class TSARTransformer(nn.Module):
                     if step is not None: 
                         step()
             else:
-                # Original non-CUDA-graph path
                 for i in it:
                     toks[:, i+1] = self.generate_next(
                         toks[:, i:i+1], 

@@ -129,20 +129,31 @@ class Pipeline:
         self.vocoder.decode_to_notebook(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))
 
     def reset_cuda_graphs(self):
-        if hasattr(self, 't2s') and hasattr(self.t2s, 'reset_cuda_graph'):
-            self.t2s.reset_cuda_graph()
-        if hasattr(self, 's2a') and hasattr(self.s2a, 'reset_cuda_graph'):
-            self.s2a.reset_cuda_graph()
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
+        try:
+            if hasattr(self, 't2s') and hasattr(self.t2s, 'reset_cuda_graph'):
+                self.t2s.reset_cuda_graph()
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 's2a') and hasattr(self.s2a, 'reset_cuda_graph'):
+                self.s2a.reset_cuda_graph()
+        except Exception:
+            pass
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
         self._warmed_up = False
 
     def cleanup(self):
         self.reset_cuda_graphs()
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     def warmup(self):
         if not self.use_cuda_graph:
