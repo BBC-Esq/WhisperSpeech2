@@ -55,21 +55,17 @@ For more details about each model, visit the [WhisperSpeech Hugging Face reposit
 | HQ Fast | `WhisperSpeech/WhisperSpeech:t2s-hq-fast-en+pl.model` |
 | v1.1 Small | `WhisperSpeech/WhisperSpeech:t2s-v1.1-small-en+pl.model` |
 
-## Model Recommendations
-
-| Use Case | S2A Model | T2S Model | VRAM | Speed |
-|----------|-----------|-----------|------|-------|
-| **Lowest Resources** | s2a-q4-tiny | t2s-tiny | ~450 MB | ~16s |
-| **Best Speed** | s2a-v1.95-small-fast | t2s-tiny | ~1.7 GB | ~15s |
-| **Balanced** | s2a-q4-hq-fast | t2s-tiny | ~1.7 GB | ~15s |
-| **Higher Quality** | s2a-q4-hq-fast | t2s-hq-fast | ~2.1 GB | ~16s |
-
-**Avoid:** Combinations using `s2a-q4-small` or `s2a-v1.1-small` with `t2s-fast-medium` result in high VRAM (~4GB) and slow processing (~42s).
+## Benchmark (no cuda graph)
 
 <img width="3680" height="1800" alt="image" src="https://github.com/user-attachments/assets/2efc192c-2d1a-4f6d-a5fc-91c3783c161e" />
 
-## CUDA Graph
+## Benchmark (with cuda graph)
 > People with Nvidia GPUs can set the "use_cuda_graph" parameter to "true" and it'll offer the following speedups:
+
+<img width="2424" height="1170" alt="image" src="https://github.com/user-attachments/assets/ba8d404c-1118-47d2-ab6f-17014a651280" />
+
+<details>
+<summary>Exact Data</summary>
 
 | S2A Model | T2S Model | Original Time (s) | CUDA Graph Time (s) | Speedup | Original VRAM (MB) | CUDA Graph VRAM (MB) | VRAM Reduction |
 |-----------|-----------|------------------:|--------------------:|--------:|-------------------:|---------------------:|---------------:|
@@ -110,6 +106,7 @@ For more details about each model, visit the [WhisperSpeech Hugging Face reposit
 | s2a-v1.95-small-fast | t2s-small | 21.15 | 4.76 | **4.44x** | 2336.34 | 2242.00 | 4.0% |
 | s2a-v1.95-small-fast | t2s-tiny | 15.04 | 3.63 | **4.14x** | 1684.00 | 1366.19 | 18.9% |
 
+</details>
 ---
 
 **Summary Statistics:**
@@ -145,6 +142,7 @@ See the `examples/` directory for more usage examples including GUI applications
 
 MIT License
 ```
+
 
 
 
