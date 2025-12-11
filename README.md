@@ -65,7 +65,8 @@ For more details about each model, visit the [WhisperSpeech Hugging Face reposit
 <img width="2424" height="1170" alt="image" src="https://github.com/user-attachments/assets/ba8d404c-1118-47d2-ab6f-17014a651280" />
 
 <details>
-<summary>Exact Data</summary>
+
+<summary>Benchmark Data</summary>
 
 | S2A Model | T2S Model | Original Time (s) | CUDA Graph Time (s) | Speedup | Original VRAM (MB) | CUDA Graph VRAM (MB) | VRAM Reduction |
 |-----------|-----------|------------------:|--------------------:|--------:|-------------------:|---------------------:|---------------:|
@@ -142,6 +143,7 @@ See the `examples/` directory for more usage examples including GUI applications
 
 MIT License
 ```
+
 
 
 
