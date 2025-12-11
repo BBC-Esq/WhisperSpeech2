@@ -296,9 +296,8 @@ class TSARTransformer(nn.Module):
         self._static_toks = torch.zeros((bs, 1), dtype=torch.long, device=dev)
         self._static_positions = torch.zeros((1,), dtype=torch.long, device=dev)
         self._static_output = torch.zeros((bs, 1), dtype=torch.long, device=dev)
-    
-    def _capture_cuda_graph(self, cps_emb, xenc, xenc_positions, T, top_k):
 
+    def _capture_cuda_graph(self, cps_emb, xenc, xenc_positions, T, top_k):
         torch.cuda.synchronize()
 
         self._cuda_graph = torch.cuda.CUDAGraph()
@@ -319,6 +318,14 @@ class TSARTransformer(nn.Module):
         self._static_positions.copy_(positions)
         self._cuda_graph.replay()
         return self._static_output.clone()
+
+    def reset_cuda_graph(self):
+        self._cuda_graph = None
+        self._static_toks = None
+        self._static_positions = None
+        self._static_output = None
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
 
     @torch.no_grad()
     def generate(self, txt, cps=15, lang="en", stoks_prompt=None, N=None, bs=1, T=0.7, top_k=None, step=None, show_progress_bar=True):
@@ -349,51 +356,68 @@ class TSARTransformer(nn.Module):
             langs = torch.tensor(langs, device=dev)
             langs = F.pad(langs, (1, self.ttoks_len - len(langs) - 1), value=languages.to_id(lang0))
 
-        toks = torch.zeros((bs,N), dtype=torch.long, device=dev)
-        toks[:,0] = self.stoks_codes + self.tunables.padding_token_offset
+        toks = torch.zeros((bs, N), dtype=torch.long, device=dev)
+        toks[:, 0] = self.stoks_codes + self.tunables.padding_token_offset
         start = 0
         if stoks_prompt is not None:
-            toks[:,1:len(stoks_prompt)+1] = stoks_prompt
+            toks[:, 1:len(stoks_prompt)+1] = stoks_prompt
             start = len(stoks_prompt)
-        it = range(start+1,N-1)
-        if show_progress_bar: it = progress_bar(it)
 
         toks_positions = torch.arange(N, device=dev)
+        
         with record_function("encode"):
             ttoks = ttoks.repeat(bs, 1)
             langs, cpss = [x.repeat(bs) for x in (langs, cpss)]
             xenc, xenc_positions, cps_emb = self.run_encoder(ttoks, langs, cpss)
-            toks_positions = torch.arange(N+1, device=dev)
-        
-        with record_function("prefill"):
-            toks[:,start+1] = self.generate_one(toks[:,:start+1].contiguous(), toks_positions[:start+1], cps_emb, xenc, xenc_positions, T, top_k)[:,0]
 
-        # CUDA GRAPH GENERATION LOOP
+        with record_function("prefill"):
+            toks[:, start+1] = self.generate_one(
+                toks[:, :start+1].contiguous(), 
+                toks_positions[:start+1], 
+                cps_emb, xenc, xenc_positions, T, top_k
+            )[:, 0]
+
+        it = range(start + 1, N - 1)
+        if show_progress_bar: 
+            it = progress_bar(it)
+
         with inference.inference_context():
             if self.use_cuda_graph and dev.type == 'cuda':
                 if self._cuda_graph is None:
                     self._init_cuda_graph_buffers(bs, dev)
-                    i = start + 2
-                    self._static_toks.copy_(toks[:,i-1:i])
-                    self._static_positions.copy_(toks_positions[i-1:i])
+                    capture_pos = start + 1
+                    self._static_toks.copy_(toks[:, capture_pos:capture_pos+1])
+                    self._static_positions.copy_(toks_positions[capture_pos:capture_pos+1])
                     self._capture_cuda_graph(cps_emb, xenc, xenc_positions, T, top_k)
-                    toks[:,i] = self._static_output[:,0]
-                    start = i
+                    toks[:, capture_pos+1] = self._static_output[:, 0]
+                    captured_start = capture_pos + 1
+                else:
+                    captured_start = start + 1
 
                 for i in it:
-                    if i <= start:
+                    if i < captured_start:
                         continue
-                    result = self._run_cuda_graph(toks[:,i-1:i], toks_positions[i-1:i])
-                    toks[:,i] = result[:,0]
-                    if (toks[:,i] == self.stoks_codes+self.tunables.padding_token_offset).all(): 
-                        return toks[:,1:i]
-                    if step is not None: step()
+
+                    self._static_toks.copy_(toks[:, i:i+1])
+                    self._static_positions.copy_(toks_positions[i:i+1])
+                    self._cuda_graph.replay()
+                    toks[:, i+1] = self._static_output[:, 0]
+
+                    if (toks[:, i+1] == self.stoks_codes + self.tunables.padding_token_offset).all():
+                        return toks[:, 1:i+2]
+                    if step is not None: 
+                        step()
             else:
                 # Original non-CUDA-graph path
                 for i in it:
-                    toks[:,i+1] = self.generate_next(toks[:,i:i+1], toks_positions[i:i+1], cps_emb, xenc, xenc_positions, T, top_k)[:,0]
-                    if (toks[:,i+1] == self.stoks_codes+self.tunables.padding_token_offset).all(): 
-                        return toks[:,1:i+1]
-                    if step is not None: step()
+                    toks[:, i+1] = self.generate_next(
+                        toks[:, i:i+1], 
+                        toks_positions[i:i+1], 
+                        cps_emb, xenc, xenc_positions, T, top_k
+                    )[:, 0]
+                    if (toks[:, i+1] == self.stoks_codes + self.tunables.padding_token_offset).all():
+                        return toks[:, 1:i+2]
+                    if step is not None: 
+                        step()
 
-        return toks[:,1:]
+        return toks[:, 1:]

@@ -43,6 +43,7 @@ def logits_to_probs(logits, T=1.0, top_k=None):
     # Convert T to tensor if needed (required for CUDA graph compatibility)
     if not isinstance(T, torch.Tensor):
         T = torch.tensor(T, device=logits.device, dtype=logits.dtype)
+    # Use torch.clamp instead of Python's max() for CUDA graph compatibility
     logits = logits / torch.clamp(T, min=1e-5)
 
     if top_k is not None:

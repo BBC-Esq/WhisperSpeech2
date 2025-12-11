@@ -127,3 +127,40 @@ class Pipeline:
 
     def generate_to_notebook(self, text, speaker=None, lang='en', cps=15, step_callback=None):
         self.vocoder.decode_to_notebook(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))
+
+    def reset_cuda_graphs(self):
+        if hasattr(self, 't2s') and hasattr(self.t2s, 'reset_cuda_graph'):
+            self.t2s.reset_cuda_graph()
+        if hasattr(self, 's2a') and hasattr(self.s2a, 'reset_cuda_graph'):
+            self.s2a.reset_cuda_graph()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+        self._warmed_up = False
+
+    def cleanup(self):
+        self.reset_cuda_graphs()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+
+    def warmup(self):
+        if not self.use_cuda_graph:
+            return
+
+        if self._warmed_up:
+            return
+
+        print("Warming up (CUDA graph capture)...")
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            _ = self.generate_atoks("Warmup sentence for initialization.", speaker=self.default_speaker)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            self._warmed_up = True
+            print("Warmup complete")
+        except Exception as e:
+            print(f"Warmup failed: {e}")
+            self.reset_cuda_graphs()
+            raise

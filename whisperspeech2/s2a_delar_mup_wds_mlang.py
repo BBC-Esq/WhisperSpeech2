@@ -363,6 +363,14 @@ class SADelARTransformer(nn.Module):
         self._cuda_graph.replay()
         return self._static_output.clone()
 
+    def reset_cuda_graph(self):
+        self._cuda_graph = None
+        self._static_toks = None
+        self._static_positions = None
+        self._static_output = None
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
     @property
     def device(self):
         return next(self.parameters()).device
