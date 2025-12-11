@@ -37,15 +37,23 @@ class Pipeline:
          0.2702,  0.1699, -0.1443, -0.9614,  0.3261,  0.1718,  0.3545, -0.0686]
     )
 
-    def __init__(self, t2s_ref=None, s2a_ref=None, optimize=True, torch_compile=False, device=None, cache_dir=None):
+    # CUDA GRAPH SUPPORT
+    # use_cuda_graph: When True, captures GPU operations on first generation
+    #                 and replays them for faster subsequent generations.
+    #                 Requires a warmup call after initialization.
+    def __init__(self, t2s_ref=None, s2a_ref=None, optimize=True, torch_compile=False, 
+                 use_cuda_graph=False, device=None, cache_dir=None):
         if device is None: device = inference.get_compute_device()
         self.device = device
+        self.use_cuda_graph = use_cuda_graph
+        self._warmed_up = False
+
         args = dict(device = device, cache_dir=cache_dir)
         try:
             if t2s_ref:
                 args["ref"] = t2s_ref
             self.t2s = TSARTransformer.load_model(**args)
-            if optimize: self.t2s.optimize(torch_compile=torch_compile)
+            if optimize: self.t2s.optimize(torch_compile=torch_compile, use_cuda_graph=use_cuda_graph)
         except:
             print("Failed to load the T2S model:")
             print(traceback.format_exc())
@@ -62,13 +70,27 @@ class Pipeline:
             else:
                 cls = SADelARTransformer
             self.s2a = cls.load_model(**args)
-            if optimize: self.s2a.optimize(torch_compile=torch_compile)
+            if optimize: self.s2a.optimize(torch_compile=torch_compile, use_cuda_graph=use_cuda_graph)
         except:
             print("Failed to load the S2A model:")
             print(traceback.format_exc())
 
         self.vocoder = Vocoder(device=device)
         self.encoder = None
+
+    def warmup(self):
+        if not self.use_cuda_graph:
+            print("Warmup not needed when use_cuda_graph=False")
+            return
+
+        if self._warmed_up:
+            print("Already warmed up")
+            return
+
+        print("Warming up (CUDA graph capture)...")
+        _ = self.generate_atoks("Warmup.", speaker=self.default_speaker)
+        self._warmed_up = True
+        print("Warmup complete")
 
     def extract_spk_emb(self, fname):
         import torchaudio

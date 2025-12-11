@@ -41,7 +41,7 @@ class Tunables:
     cps_input: bool = True
     cps_bins: int = 32
     padding_token_offset: int = 0
-        
+
     lr0 :float = 1.5e-3
     clip_gradient_norm :float = .2
     weight_decay :float = 1e-1
@@ -64,7 +64,7 @@ class T2SEmbedding(nn.Module):
         self.embedding = FlexEmbeddings(codes, width, special_codes=1, frozen_width=stoks_width)
         if pos_embs is None: pos_embs = sinusoids(length, width)
         self.register_buffer("positional_embedding", pos_embs)
-    
+
     def forward(self, Stoks, xenc, cps=None, offset=0):
         Sembs = self.embedding(Stoks)
         xin = (Sembs + self.positional_embedding[offset : offset + Sembs.shape[1]]).to(xenc.dtype)
@@ -77,7 +77,7 @@ class Encoder(nn.Module):
         super().__init__()
         self.emb_width = emb_width
         self.tunables = tunables
-        
+
         self.embedding = FlexEmbeddings(codes, width, frozen_width=emb_width)
 
         if pos_embs is None: pos_embs = sinusoids(length, width)
@@ -89,22 +89,22 @@ class Encoder(nn.Module):
         ])
 
         self.ln_post = LayerNorm(width)
-        
+
         mask = torch.empty(length, length).fill_(-torch.inf).triu_(1)
         self.register_buffer("mask", mask, persistent=False)
-        
+
     def forward(self, Stoks, positions, lang_emb=None):
         xin = self.embedding(Stoks)
 
         if lang_emb is not None: xin = xin + lang_emb
-        
+
         x = (xin +
              self.positional_embedding[positions]).to(xin.dtype)
 
         for l in self.layers: x = l(x, positions,
                                     causal=self.tunables.causal_encoder and self.training,
                                     mask=self.mask if self.tunables.causal_encoder and not self.training else None)
-        
+
         return self.ln_post(x)
 
 
@@ -122,13 +122,13 @@ class TSARTransformer(nn.Module):
         self.tunables = tunables
         if self.stoks_width is None: self.stoks_width = self.width
         if self.ttoks_width is None: self.ttoks_width = self.width
-        
+
         self.lang_embeddings = nn.Embedding(len(languages.languages), width)
         if tunables.cps_input:
             self.cps_embeddings = nn.Embedding(tunables.cps_bins, self.width)
         else:
             self.cps_embeddings = None        
-        
+
         encoder_depth = int(depth * 2 * tunables.encoder_depth_ratio)
         decoder_depth = depth * 2 - encoder_depth
         tformer_args = dict(width=width, n_head=n_head, ffn_mult=ffn_mult, tunables=tunables)
@@ -142,7 +142,14 @@ class TSARTransformer(nn.Module):
             width=width, n_head=n_head, ffn_mult=ffn_mult,
         )
         self.tokenizer = None
-        
+
+        # CUDA GRAPH SUPPORT
+        self.use_cuda_graph = False
+        self._cuda_graph = None
+        self._static_toks = None
+        self._static_positions = None
+        self._static_output = None
+
         self.apply(self.init_transformer)
 
     def load_frozen_semantic_embeddings(self, vqmodel):
@@ -177,7 +184,7 @@ class TSARTransformer(nn.Module):
             m.no_weight_decay = True
             torch.nn.init.constant_(m.bias, 0)
             torch.nn.init.constant_(m.weight, 1)
-    
+
     def _embed_cps(self, cpss):
         if self.cps_embeddings is None: return None
 
@@ -189,7 +196,7 @@ class TSARTransformer(nn.Module):
         if len(languages.shape) != 3: lang_embs = self.lang_embeddings(languages)
         else: lang_embs = languages
         if len(lang_embs.shape) == 2: lang_embs = lang_embs.unsqueeze(1)
-        
+
         cps_emb = self._embed_cps(cpss)
 
         with record_function("encoder"):
@@ -197,7 +204,7 @@ class TSARTransformer(nn.Module):
             xenc = self.encoder(in_ttoks.to(torch.long), positions, lang_emb=lang_embs)
 
         return xenc, positions, cps_emb
-    
+
     def forward(self, in_ttoks, out_ttoks, languages, cpss, in_stoks, out_stoks=None, in_stoks_positions=None, loss=True, offset=None, xenc=None, xenc_positions=None, cps_emb=None):
         if xenc is None:
             xenc, xenc_positions, cps_emb = self.run_encoder(in_ttoks, languages, cpss)
@@ -254,7 +261,8 @@ class TSARTransformer(nn.Module):
             for bn,b in m.named_buffers(recurse=False):
                 setattr(m,bn,b.to(dtype))
 
-    def optimize(self, max_batch_size=1, dtype=torch.float16, torch_compile=True):
+    # ADDED use_cuda_graph PARAMETER
+    def optimize(self, max_batch_size=1, dtype=torch.float16, torch_compile=True, use_cuda_graph=False):
         for emb in [self.encoder.embedding, self.embeddings.embedding]:
             emb.convert_for_eval()
         for l in self.encoder.layers:
@@ -264,6 +272,9 @@ class TSARTransformer(nn.Module):
             l.cross_attn.convert_for_eval()
             l.setup_kv_cache(max_batch_size, self.stoks_len, self.ttoks_len)
         self.switch_dtypes(dtype)
+
+        self.use_cuda_graph = use_cuda_graph
+
         if torch_compile:
             self.generate_next = torch.compile(self.generate_next, mode="reduce-overhead", fullgraph=True)
 
@@ -279,6 +290,35 @@ class TSARTransformer(nn.Module):
 
     def generate_next(self, *args, **kwargs):
         return self.generate_one(*args, **kwargs)
+
+    # CUDA GRAPH HELPER METHODS
+    def _init_cuda_graph_buffers(self, bs, dev):
+        self._static_toks = torch.zeros((bs, 1), dtype=torch.long, device=dev)
+        self._static_positions = torch.zeros((1,), dtype=torch.long, device=dev)
+        self._static_output = torch.zeros((bs, 1), dtype=torch.long, device=dev)
+    
+    def _capture_cuda_graph(self, cps_emb, xenc, xenc_positions, T, top_k):
+
+        torch.cuda.synchronize()
+
+        self._cuda_graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self._cuda_graph):
+            self._static_output = self.generate_one(
+                self._static_toks,
+                self._static_positions,
+                cps_emb,
+                xenc,
+                xenc_positions,
+                T,
+                top_k
+            )
+        torch.cuda.synchronize()
+
+    def _run_cuda_graph(self, toks, positions):
+        self._static_toks.copy_(toks)
+        self._static_positions.copy_(positions)
+        self._cuda_graph.replay()
+        return self._static_output.clone()
 
     @torch.no_grad()
     def generate(self, txt, cps=15, lang="en", stoks_prompt=None, N=None, bs=1, T=0.7, top_k=None, step=None, show_progress_bar=True):
@@ -327,10 +367,33 @@ class TSARTransformer(nn.Module):
         
         with record_function("prefill"):
             toks[:,start+1] = self.generate_one(toks[:,:start+1].contiguous(), toks_positions[:start+1], cps_emb, xenc, xenc_positions, T, top_k)[:,0]
-        with inference.inference_context():
-            for i in it:
-                toks[:,i+1] = self.generate_next(toks[:,i:i+1], toks_positions[i:i+1], cps_emb, xenc, xenc_positions, T, top_k)[:,0]
-                if (toks[:,i+1] == self.stoks_codes+self.tunables.padding_token_offset).all(): return toks[:,1:i+1]
 
-                if step is not None: step()
+        # CUDA GRAPH GENERATION LOOP
+        with inference.inference_context():
+            if self.use_cuda_graph and dev.type == 'cuda':
+                if self._cuda_graph is None:
+                    self._init_cuda_graph_buffers(bs, dev)
+                    i = start + 2
+                    self._static_toks.copy_(toks[:,i-1:i])
+                    self._static_positions.copy_(toks_positions[i-1:i])
+                    self._capture_cuda_graph(cps_emb, xenc, xenc_positions, T, top_k)
+                    toks[:,i] = self._static_output[:,0]
+                    start = i
+
+                for i in it:
+                    if i <= start:
+                        continue
+                    result = self._run_cuda_graph(toks[:,i-1:i], toks_positions[i-1:i])
+                    toks[:,i] = result[:,0]
+                    if (toks[:,i] == self.stoks_codes+self.tunables.padding_token_offset).all(): 
+                        return toks[:,1:i]
+                    if step is not None: step()
+            else:
+                # Original non-CUDA-graph path
+                for i in it:
+                    toks[:,i+1] = self.generate_next(toks[:,i:i+1], toks_positions[i:i+1], cps_emb, xenc, xenc_positions, T, top_k)[:,0]
+                    if (toks[:,i+1] == self.stoks_codes+self.tunables.padding_token_offset).all(): 
+                        return toks[:,1:i+1]
+                    if step is not None: step()
+
         return toks[:,1:]

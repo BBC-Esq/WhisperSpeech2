@@ -44,7 +44,7 @@ class DelSumEmbedding(nn.Module):
             embs = torch.zeros((b,newn,self.width), dtype=xenc.dtype, device=xenc.device)
             for i in range(self.quantizers):
                 embs[:, :] += self.embeddings[i](toks[:,i,:])
-            
+
             x = embs.to(xenc.dtype)
         return x
 
@@ -80,12 +80,12 @@ class Tunables:
     rope :bool = True
     q0_loss_mult: float = 1
     causal_encoder :bool = False
-    
+
     lr0 :float = 3e-3
     clip_gradient_norm :float = 2
     weight_decay :float = 1e-3
     warmup_steps :float = 2000
-        
+
     force_hidden_to_emb: bool = False
 
     @staticmethod
@@ -101,7 +101,6 @@ class Tunables:
             args.pop(k, None)
         return args
 
-            
 class SADelARTransformer(nn.Module):
     def __init__(self, depth=3, ctx_n=2250,
                  stoks_len=750, stoks_codes=4097, stoks_width=None,
@@ -117,7 +116,14 @@ class SADelARTransformer(nn.Module):
         self.width = width
         self.base_width = 3 * head_width
         self.tunables = tunables
-        
+
+        # CUDA GRAPH SUPPORT
+        self.use_cuda_graph = False
+        self._cuda_graph = None
+        self._static_toks = None
+        self._static_positions = None
+        self._static_output = None
+
         if stoks_width is None: stoks_width = width
         if spk_width is None: spk_width = width
         self.emb_factor = width != stoks_width
@@ -133,12 +139,12 @@ class SADelARTransformer(nn.Module):
             self.emb_to_hidden = nn.Linear(stoks_width, width)
             if self.tunables.causal_encoder or self.tunables.force_hidden_to_emb:
                 self.hidden_to_emb = nn.Linear(width, stoks_width)
-        
+
         if self.spk_factor:
             self.spk_to_hidden = nn.Linear(spk_width, width)
 
         qk_scale = self.tunables.query_mult * 8 / math.sqrt(head_width)
-        
+
         encoder_depth = int(depth * 2 * tunables.encoder_depth_ratio)
         decoder_depth = depth * 2 - encoder_depth
         self.encoder = nn.Sequential(*[
@@ -158,14 +164,14 @@ class SADelARTransformer(nn.Module):
         self.head = DelSumHead(n_head=n_head, head_width=head_width, quantizers=quantizers)
         for l in self.decoder.layers:
             l.cross_attn.key_subsampling = 3
-        
+
         self.register_buffer('val_true', torch.zeros(self.quantizers))
         self.register_buffer('val_total', torch.zeros(self.quantizers))
         self.apply(self.init_transformer)
 
     def setup(self, device):
         pass
-        
+
     def load_frozen_semantic_embeddings(self, vqmodel):
         with torch.no_grad():
             self.semantic_embedding.weight[:] = vqmodel.rq.layers[0]._codebook.embed[0]
@@ -174,7 +180,7 @@ class SADelARTransformer(nn.Module):
     def load_frozen_acoustic_embeddings(self, amodel):
         for i in range(self.quantizers):
             self.decoder.embeddings[i].set_frozen_embeddings(amodel.quantizer.vq.layers[i].codebook)
-            
+
     def init_transformer(self, m):
         if isinstance(m, LinearHead):
             m.no_weight_decay = True
@@ -293,10 +299,10 @@ class SADelARTransformer(nn.Module):
         model.load_state_dict(spec['state_dict'])
         model.eval().to(device)
         return model
-    
+
     def get_extra_state(self):
         return { 'speaker_map': self.speaker_map }
-    
+
     def set_extra_state(self, st):
         self.speaker_map = st['speaker_map']
 
@@ -313,7 +319,7 @@ class SADelARTransformer(nn.Module):
             for bn,b in m.named_buffers(recurse=False):
                 setattr(m,bn,b.to(dtype))
 
-    def optimize(self, max_batch_size=1, dtype=torch.float16, torch_compile=True):
+    def optimize(self, max_batch_size=1, dtype=torch.float16, torch_compile=True, use_cuda_graph=False):
         for emb in self.embds.embeddings:
             emb.convert_for_eval()
         for l in self.encoder:
@@ -323,8 +329,39 @@ class SADelARTransformer(nn.Module):
             l.cross_attn.convert_for_eval()
             l.setup_kv_cache(max_batch_size, self.ctx_n, self.stoks_len)
         self.switch_dtypes(dtype)
+
+        self.use_cuda_graph = use_cuda_graph
+
         if torch_compile:
             self.generate_next = torch.compile(self.generate_next, mode="reduce-overhead", fullgraph=True)
+
+    # CUDA GRAPH HELPER METHODS
+    def _init_cuda_graph_buffers(self, bs, dev):
+        self._static_toks = torch.zeros((bs, self.quantizers, 1), dtype=torch.long, device=dev)
+        self._static_positions = torch.zeros((1,), dtype=torch.long, device=dev)
+        self._static_output = torch.zeros((bs, self.quantizers, 1), dtype=torch.long, device=dev)
+
+    def _capture_cuda_graph(self, langs, xenc, xenc_positions, T, top_k):
+        torch.cuda.synchronize()
+
+        self._cuda_graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self._cuda_graph):
+            self._static_output = self.generate_one(
+                self._static_toks,
+                self._static_positions,
+                langs,
+                xenc,
+                xenc_positions,
+                T,
+                top_k
+            )
+        torch.cuda.synchronize()
+
+    def _run_cuda_graph(self, toks, positions):
+        self._static_toks.copy_(toks)
+        self._static_positions.copy_(positions)
+        self._cuda_graph.replay()
+        return self._static_output.clone()
 
     @property
     def device(self):
@@ -362,16 +399,35 @@ class SADelARTransformer(nn.Module):
             initial = self.generate_one(toks[:,:,:start], toks_positions[:start], langs, xenc, xenc_positions, T, top_k)
             toks[:,:start,start:start+1] = initial[:,:start]
             start += 1
-            
+
+        # CUDA GRAPH GENERATION LOOP
         with inference.inference_context():
             it = range(start,min(N,self.ctx_n-1))
             if show_progress_bar: it = progress_bar(it)
 
-            for i in it:
-                with record_function("generate_one"):
-                    toks[:,:i,i:i+1] = self.generate_next(toks[:,:,i-1:i], toks_positions[i-1:i], langs, xenc, xenc_positions, T, top_k)[:,:i]
+            if self.use_cuda_graph and dev.type == 'cuda':
+                if self._cuda_graph is None:
+                    self._init_cuda_graph_buffers(bs, dev)
+                    i = start
+                    self._static_toks.copy_(toks[:,:,i-1:i])
+                    self._static_positions.copy_(toks_positions[i-1:i])
+                    self._capture_cuda_graph(langs, xenc, xenc_positions, T, top_k)
+                    toks[:,:i,i:i+1] = self._static_output[:,:i]
+                    start = i + 1
 
-                if step is not None: step()
+                for i in it:
+                    if i < start:
+                        continue
+                    with record_function("generate_one"):
+                        result = self._run_cuda_graph(toks[:,:,i-1:i], toks_positions[i-1:i])
+                        toks[:,:i,i:i+1] = result[:,:i]
+                    if step is not None: step()
+            else:
+                for i in it:
+                    with record_function("generate_one"):
+                        toks[:,:i,i:i+1] = self.generate_next(toks[:,:,i-1:i], toks_positions[i-1:i], langs, xenc, xenc_positions, T, top_k)[:,:i]
+                    if step is not None: step()
+
         toks = toks[:,:,1:N]
         for j in range(self.quantizers):
             toks[:, j] = torch.roll(toks[:, j], -j)
