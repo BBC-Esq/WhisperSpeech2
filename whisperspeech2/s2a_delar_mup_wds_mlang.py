@@ -123,12 +123,6 @@ class SADelARTransformer(nn.Module):
         self._static_toks = None
         self._static_positions = None
         self._static_output = None
-        self._graph_batch_size = None
-        self._graph_langs = None
-        self._graph_xenc = None
-        self._graph_xenc_positions = None
-        self._graph_T = None
-        self._graph_top_k = None
 
         if stoks_width is None: stoks_width = width
         if spk_width is None: spk_width = width
@@ -228,7 +222,7 @@ class SADelARTransformer(nn.Module):
         x = semb
         for l in self.encoder: x = l(x, positions, causal=self.tunables.causal_encoder)
         return self.ln_post(x)
-
+    
     def run_encoder(self, Stoks, speakers):
         semb = self.embed_stoks(Stoks)
         with record_function("encoder"):
@@ -255,7 +249,7 @@ class SADelARTransformer(nn.Module):
             x = self.decoder(embs, atoks_positions, xenc, xenc_positions)
             logits = self.head(x, embeddings=self.embds.embeddings)
             logits *= self.tunables.output_mult / (self.width / self.base_width)
-
+            
         if noloss:
             return logits
 
@@ -402,7 +396,7 @@ class SADelARTransformer(nn.Module):
 
     def generate_next(self, *args, **kwargs):
         return self.generate_one(*args, **kwargs)
-
+    
     @torch.no_grad()
     def generate(self, stoks, speakers, langs=None, atoks_prompt=None, N=None, bs=1, T=0.7, top_k=None, show_progress_bar=True, step=None, subsample_enc=False):
         dev = self.device
@@ -432,51 +426,28 @@ class SADelARTransformer(nn.Module):
             it = range(start, min(N, self.ctx_n-1))
             if show_progress_bar: it = progress_bar(it)
 
-            use_graph_this_call = self.use_cuda_graph and dev.type == 'cuda'
+            if self.use_cuda_graph and dev.type == 'cuda':
+                if self._static_toks is None or self._graph_batch_size != bs:
+                    self._init_cuda_graph_buffers(bs, dev)
 
-            if use_graph_this_call:
-                try:
-                    if self._static_toks is None or self._graph_batch_size != bs:
-                        self._init_cuda_graph_buffers(bs, dev)
+                capture_pos = start
+                self._static_toks.copy_(toks[:,:,capture_pos-1:capture_pos])
+                self._static_positions.copy_(toks_positions[capture_pos-1:capture_pos])
+                self._capture_cuda_graph(langs, xenc, xenc_positions, T, top_k)
+                toks[:,:capture_pos,capture_pos:capture_pos+1] = self._static_output[:,:capture_pos]
+                graph_start = capture_pos + 1
 
-                    capture_pos = start
-                    self._static_toks.copy_(toks[:,:,capture_pos-1:capture_pos])
-                    self._static_positions.copy_(toks_positions[capture_pos-1:capture_pos])
-                    self._capture_cuda_graph(langs, xenc, xenc_positions, T, top_k)
-                    toks[:,:capture_pos,capture_pos:capture_pos+1] = self._static_output[:,:capture_pos]
-                    graph_start = capture_pos + 1
+                for i in it:
+                    if i < graph_start:
+                        continue
 
-                    for i in it:
-                        if i < graph_start:
-                            continue
+                    self._static_toks.copy_(toks[:,:,i-1:i])
+                    self._static_positions.copy_(toks_positions[i-1:i])
+                    self._cuda_graph.replay()
+                    toks[:,:i,i:i+1] = self._static_output[:,:i]
 
-                        self._static_toks.copy_(toks[:,:,i-1:i])
-                        self._static_positions.copy_(toks_positions[i-1:i])
-                        self._cuda_graph.replay()
-                        toks[:,:i,i:i+1] = self._static_output[:,:i]
-
-                        if step is not None: step()
-
-                except Exception as e:
-                    print(f"CUDA graph failed in S2A, falling back: {e}")
-                    self.use_cuda_graph = False
-                    self.reset_cuda_graph()
-
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                        torch.cuda.empty_cache()
-
-                    toks = torch.full((bs, self.quantizers, self.ctx_n), self.codes+1, dtype=torch.long, device=dev)
-                    start = 1
-                    initial = self.generate_one(toks[:,:,:start], toks_positions[:start], langs, xenc, xenc_positions, T, top_k)
-                    toks[:,:start,start:start+1] = initial[:,:start]
-                    start += 1
-
-                    it = range(start, min(N, self.ctx_n-1))
-                    if show_progress_bar: it = progress_bar(it)
-                    use_graph_this_call = False
-
-            if not use_graph_this_call:
+                    if step is not None: step()
+            else:
                 for i in it:
                     with record_function("generate_one"):
                         toks[:,:i,i:i+1] = self.generate_next(toks[:,:,i-1:i], toks_positions[i-1:i], langs, xenc, xenc_positions, T, top_k)[:,:i]
