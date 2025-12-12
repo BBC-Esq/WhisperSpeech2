@@ -149,6 +149,12 @@ class TSARTransformer(nn.Module):
         self._static_toks = None
         self._static_positions = None
         self._static_output = None
+        self._graph_batch_size = None
+        self._graph_cps_emb = None
+        self._graph_xenc = None
+        self._graph_xenc_positions = None
+        self._graph_T = None
+        self._graph_top_k = None
 
         self.apply(self.init_transformer)
 
@@ -396,31 +402,59 @@ class TSARTransformer(nn.Module):
             it = progress_bar(it)
 
         with inference.inference_context():
-            if self.use_cuda_graph and dev.type == 'cuda':
-                if self._static_toks is None or self._graph_batch_size != bs:
-                    self._init_cuda_graph_buffers(bs, dev)
+            use_graph_this_call = self.use_cuda_graph and dev.type == 'cuda'
 
-                capture_pos = start + 1
-                self._static_toks.copy_(toks[:, capture_pos:capture_pos+1])
-                self._static_positions.copy_(toks_positions[capture_pos:capture_pos+1])
-                self._capture_cuda_graph(cps_emb, xenc, xenc_positions, T, top_k)
-                toks[:, capture_pos+1] = self._static_output[:, 0]
-                graph_start = capture_pos + 1
+            if use_graph_this_call:
+                try:
+                    if self._static_toks is None or self._graph_batch_size != bs:
+                        self._init_cuda_graph_buffers(bs, dev)
 
-                for i in it:
-                    if i < graph_start:
-                        continue
+                    capture_pos = start + 1
+                    self._static_toks.copy_(toks[:, capture_pos:capture_pos+1])
+                    self._static_positions.copy_(toks_positions[capture_pos:capture_pos+1])
+                    self._capture_cuda_graph(cps_emb, xenc, xenc_positions, T, top_k)
+                    toks[:, capture_pos+1] = self._static_output[:, 0]
+                    graph_start = capture_pos + 1
 
-                    self._static_toks.copy_(toks[:, i:i+1])
-                    self._static_positions.copy_(toks_positions[i:i+1])
-                    self._cuda_graph.replay()
-                    toks[:, i+1] = self._static_output[:, 0]
+                    for i in it:
+                        if i < graph_start:
+                            continue
+                        
+                        self._static_toks.copy_(toks[:, i:i+1])
+                        self._static_positions.copy_(toks_positions[i:i+1])
+                        self._cuda_graph.replay()
+                        toks[:, i+1] = self._static_output[:, 0]
 
-                    if (toks[:, i+1] == self.stoks_codes + self.tunables.padding_token_offset).all():
-                        return toks[:, 1:i+2]
-                    if step is not None: 
-                        step()
-            else:
+                        if (toks[:, i+1] == self.stoks_codes + self.tunables.padding_token_offset).all():
+                            return toks[:, 1:i+2]
+                        if step is not None: 
+                            step()
+                            
+                except Exception as e:
+                    print(f"CUDA graph failed, falling back to standard generation: {e}")
+                    self.use_cuda_graph = False
+                    self.reset_cuda_graph()
+
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                        torch.cuda.empty_cache()
+
+                    toks = torch.zeros((bs, N), dtype=torch.long, device=dev)
+                    toks[:, 0] = self.stoks_codes + self.tunables.padding_token_offset
+
+                    with record_function("prefill_fallback"):
+                        toks[:, start+1] = self.generate_one(
+                            toks[:, :start+1].contiguous(), 
+                            toks_positions[:start+1], 
+                            cps_emb, xenc, xenc_positions, T, top_k
+                        )[:, 0]
+
+                    it = range(start + 1, N - 1)
+                    if show_progress_bar:
+                        it = progress_bar(it)
+                    use_graph_this_call = False
+
+            if not use_graph_this_call:
                 for i in it:
                     toks[:, i+1] = self.generate_next(
                         toks[:, i:i+1], 
