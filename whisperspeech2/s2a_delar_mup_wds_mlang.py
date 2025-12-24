@@ -117,7 +117,6 @@ class SADelARTransformer(nn.Module):
         self.base_width = 3 * head_width
         self.tunables = tunables
 
-        # CUDA GRAPH SUPPORT
         self.use_cuda_graph = False
         self._cuda_graph = None
         self._static_toks = None
@@ -335,7 +334,6 @@ class SADelARTransformer(nn.Module):
         if torch_compile:
             self.generate_next = torch.compile(self.generate_next, mode="reduce-overhead", fullgraph=True)
 
-    # CUDA GRAPH HELPER METHODS
     def _init_cuda_graph_buffers(self, bs, dev):
         self._static_toks = torch.zeros((bs, self.quantizers, 1), dtype=torch.long, device=dev)
         self._static_positions = torch.zeros((1,), dtype=torch.long, device=dev)

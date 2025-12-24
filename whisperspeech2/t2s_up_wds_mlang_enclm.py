@@ -143,7 +143,6 @@ class TSARTransformer(nn.Module):
         )
         self.tokenizer = None
 
-        # CUDA GRAPH SUPPORT
         self.use_cuda_graph = False
         self._cuda_graph = None
         self._static_toks = None
@@ -261,7 +260,6 @@ class TSARTransformer(nn.Module):
             for bn,b in m.named_buffers(recurse=False):
                 setattr(m,bn,b.to(dtype))
 
-    # ADDED use_cuda_graph PARAMETER
     def optimize(self, max_batch_size=1, dtype=torch.float16, torch_compile=True, use_cuda_graph=False):
         for emb in [self.encoder.embedding, self.embeddings.embedding]:
             emb.convert_for_eval()
@@ -291,7 +289,6 @@ class TSARTransformer(nn.Module):
     def generate_next(self, *args, **kwargs):
         return self.generate_one(*args, **kwargs)
 
-    # CUDA GRAPH HELPER METHODS
     def _init_cuda_graph_buffers(self, bs, dev):
         self._static_toks = torch.zeros((bs, 1), dtype=torch.long, device=dev)
         self._static_positions = torch.zeros((1,), dtype=torch.long, device=dev)
