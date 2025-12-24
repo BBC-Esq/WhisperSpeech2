@@ -1,3 +1,5 @@
+__all__ = ['Pipeline']
+
 from os.path import expanduser
 import torch
 from whisperspeech2.t2s_up_wds_mlang_enclm import TSARTransformer
@@ -7,7 +9,6 @@ from whisperspeech2 import inference, s2a_delar_mup_wds_mlang_cond
 import traceback
 from pathlib import Path
 
-__all__ = ['Pipeline']
 
 class Pipeline:
     default_speaker = torch.tensor(
@@ -37,10 +38,6 @@ class Pipeline:
          0.2702,  0.1699, -0.1443, -0.9614,  0.3261,  0.1718,  0.3545, -0.0686]
     )
 
-    # CUDA GRAPH SUPPORT
-    # use_cuda_graph: When True, captures GPU operations on first generation
-    #                 and replays them for faster subsequent generations.
-    #                 Requires a warmup call after initialization.
     def __init__(self, t2s_ref=None, s2a_ref=None, optimize=True, torch_compile=False, 
                  use_cuda_graph=False, device=None, cache_dir=None):
         if device is None: device = inference.get_compute_device()
