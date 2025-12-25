@@ -21,7 +21,7 @@ licenses = {
 }
 statuses = [ '1 - Planning', '2 - Pre-Alpha', '3 - Alpha',
     '4 - Beta', '5 - Production/Stable', '6 - Mature', '7 - Inactive' ]
-py_versions = '3.8 3.9 3.10 3.11 3.12'.split()
+py_versions = '3.10 3.11 3.12 3.13'.split()
 
 requirements = shlex.split(cfg.get('requirements', ''))
 min_python = cfg['min_python']
@@ -47,3 +47,4 @@ setuptools.setup(
     long_description_content_type = 'text/markdown',
     zip_safe = False,
     **setup_cfg)
+
