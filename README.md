@@ -43,7 +43,7 @@ You can mix and match the models for different quality and compute requirements.
 ## Benchmark (with cuda graph)
 > People with Nvidia GPUs can set the "use_cuda_graph" parameter to "true" for faster processing.
 
-<img width="1872" height="955" alt="image" src="https://github.com/user-attachments/assets/43352056-b452-4570-a976-a43188184765" />
+<img width="1877" height="950" alt="image" src="https://github.com/user-attachments/assets/843fb889-453c-4dd9-bd95-8f0b9b167fe8" />
 
 ## Examples
 
@@ -57,6 +57,7 @@ The fine folks at the [Dia2](https://github.com/nari-labs/dia2) for forcing me t
 # BIG FUCK YOU
 
 And finally a big "fuck you" to Microsoft for installing shit on my computer that I don't need and/or want for years.<p>Your pathetic VibeVoice project just got pwned!
+
 
 
 
