@@ -35,6 +35,37 @@ def sinusoids(length, channels, max_timescale=10000):
     scaled_time = torch.arange(length)[:, np.newaxis] * inv_timescales[np.newaxis, :]
     return torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
 
+class Rotary(torch.nn.Module):
+    def __init__(self, dim, base=10000):
+        super().__init__()
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer("inv_freq", inv_freq)
+        self.seq_len_cached = 2500
+        self.cos_cached = None
+        self.sin_cached = None
+
+    def _update_cache(self, x):
+        t = torch.arange(self.seq_len_cached, device=x.device).type_as(self.inv_freq)
+        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        emb = torch.cat((freqs, freqs), dim=-1).to(x.device)
+        self.cos_cached = emb.cos()[None, :, None, :]
+        self.sin_cached = emb.sin()[None, :, None, :]
+
+    def forward(self, x, seq_dim=1):
+        if self.cos_cached is None or self.cos_cached.device != x.device:
+            self._update_cache(x)
+        return self.cos_cached, self.sin_cached
+
+
+def rotate_half(x):
+    x1, x2 = x[..., : x.shape[-1] // 2], x[..., x.shape[-1] // 2 :]
+    return torch.cat(
+        (-x2, x1), dim=len(x.shape)-1
+    )
+
+def rope_rotate(x, positions, cos, sin):
+    return x * cos[:,positions] + rotate_half(x) * sin[:,positions]
+
 class MultiHeadAttention(nn.Module):
     def __init__(self, n_state: int, n_head: int, qk_scale: float = 1, rope: bool = False, cross=False):
         super().__init__()
@@ -84,7 +115,7 @@ class MultiHeadAttention(nn.Module):
         else:
             self.qkv = self.merge_linears([self.query, self.key, self.value],
                                           [self.sqrt_qk_scale, self.sqrt_qk_scale, 1])
-        
+
     def split_heads(self, x, x_positions, rope=False, subsampling=1):
         x = x.view(*x.shape[:2], self.n_head, -1)
         if rope:
@@ -100,8 +131,6 @@ class MultiHeadAttention(nn.Module):
         causal = False,
         mask=None,
     ):
-        if self.k_cache is not None:
-            assert qx.shape[0] <= self.k_cache.shape[0], "please pass in a larger max_batch_size to setup_kv_cache"
         if self.qkv:
             q,k,v = self.qkv(qx).split(self.odim, dim=-1)
         elif self.kv:
@@ -109,20 +138,18 @@ class MultiHeadAttention(nn.Module):
             k,v = self.kv(kvx).split(self.odim, dim=-1)
         else:
             q,k,v = None,None,None
-        
+
         if q is None: q = self.query(qx) * self.sqrt_qk_scale
         q = self.split_heads(q, q_positions, rope = self.rotary, subsampling = self.query_subsampling)
 
-        if kvx is not self.cached_kvx:
-            if k is None: k = self.key(kvx) * self.sqrt_qk_scale
-            k = self.split_heads(k, kv_positions, rope = self.rotary, subsampling = self.key_subsampling)
-            if v is None: v = self.value(kvx)
-            v = self.split_heads(v, kv_positions)
-            if self.k_cache is not None:
-                self.k_cache[:k.shape[0],:,kv_positions] = k
-                self.v_cache[:v.shape[0],:,kv_positions] = v
-
+        if k is None: k = self.key(kvx) * self.sqrt_qk_scale
+        k = self.split_heads(k, kv_positions, rope = self.rotary, subsampling = self.key_subsampling)
+        if v is None: v = self.value(kvx)
+        v = self.split_heads(v, kv_positions)
+        
         if self.k_cache is not None:
+            self.k_cache[:k.shape[0],:,kv_positions] = k
+            self.v_cache[:v.shape[0],:,kv_positions] = v
             k, v = self.k_cache[:k.shape[0]], self.v_cache[:v.shape[0]]
 
         if mask is not None:
@@ -131,36 +158,6 @@ class MultiHeadAttention(nn.Module):
         wv = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0, is_causal=causal)
         
         return self.out(wv.permute(0, 2, 1, 3).flatten(start_dim=2))
-
-class Rotary(torch.nn.Module):
-    def __init__(self, dim, base=10000):
-        super().__init__()
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
-        self.register_buffer("inv_freq", inv_freq)
-        self.seq_len_cached = None
-        self.cos_cached = None
-        self.sin_cached = None
-
-    def forward(self, x, seq_dim=1):
-        seq_len = x.shape[seq_dim]
-        if not self.seq_len_cached or seq_len > self.seq_len_cached:
-            self.seq_len_cached = 2500
-            
-            t = torch.arange(self.seq_len_cached, device=x.device).type_as(self.inv_freq)
-            freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-            emb = torch.cat((freqs, freqs), dim=-1).to(x.device)
-            self.cos_cached = emb.cos()[None, :, None, :]
-            self.sin_cached = emb.sin()[None, :, None, :]
-        return self.cos_cached, self.sin_cached
-
-def rotate_half(x):
-    x1, x2 = x[..., : x.shape[-1] // 2], x[..., x.shape[-1] // 2 :]
-    return torch.cat(
-        (-x2, x1), dim=len(x.shape)-1
-    )
-
-def rope_rotate(x, positions, cos, sin):
-    return x * cos[:,positions] + rotate_half(x) * sin[:,positions]
 
 class ResidualAttentionBlock(nn.Module):
     def __init__(self, n_state: int, n_head: int, cross_attention: bool = False, rope: bool = False,
@@ -179,12 +176,12 @@ class ResidualAttentionBlock(nn.Module):
             nn.Linear(n_state, n_mlp), nn.GELU(), nn.Linear(n_mlp, n_state)
         )
         self.mlp_ln = LayerNorm(n_state)
-    
+
     def setup_kv_cache(self, max_batch_size, max_seq_len, max_cross_seq_len=None):
         self.attn.setup_kv_cache(max_batch_size, max_seq_len)
         if self.cross_attn:
             self.cross_attn.setup_kv_cache(max_batch_size, max_cross_seq_len)
-    
+
     def forward(
         self,
         x: Tensor,
@@ -214,7 +211,7 @@ class BaseDecoder(nn.Module):
         ])
 
         self.ln_post = LayerNorm(width)
-        
+
         mask = torch.empty(length, length).fill_(-torch.inf).triu_(1)
         self.register_buffer("mask", mask, persistent=False)
 
@@ -235,30 +232,31 @@ class FlexEmbeddings(nn.Module):
         self.codes = codes
         self.special_codes = special_codes
         if frozen_width is None: frozen_width = width
-        
+
         self.main = nn.Embedding(codes, frozen_width or width)
         self.emb_to_hidden = EmbeddingProjector(frozen_width, width) if frozen_width != width else None
         self.hidden_to_emb = EmbeddingProjector(width, frozen_width) if unembed and frozen_width != width else None
         if special_codes:
             self.special = special_embedding or nn.Embedding(special_codes, width)
-            
+
         self.register_buffer('merged_in', None)
         self.register_buffer('merged_out', None)
         self.register_buffer('bias_out', None)
-    
+
     def set_frozen_embeddings(self, values):
         with torch.no_grad():
             self.main.weight[:] = values
             self.main.lr_scale = 0
-    
+
     @torch.no_grad()
     def convert_for_eval(self):
         if not self.special_codes: return
+
         main_w = self.main.weight
         if self.emb_to_hidden is not None: main_w = self.emb_to_hidden(main_w)
         weight = torch.cat([main_w, self.special.weight], dim=0)
         self.merged_in = nn.Embedding(*weight.shape, _weight=weight)
-        
+
         weight = self.main.weight
         if self.hidden_to_emb: weight = weight @ self.hidden_to_emb.weight
         self.merged_out = torch.cat([weight.T, self.special.weight.T], dim=1).T.contiguous()
@@ -279,25 +277,25 @@ class FlexEmbeddings(nn.Module):
             embs = self.main(torch.where(special_mask, 0, toks))
         else:
             embs = self.main(toks)
-        
+
         if self.emb_to_hidden: embs = self.emb_to_hidden(embs)
-        
+
         if self.special_codes:
             embs[special_mask] = self.special(toks[special_mask] - self.codes).to(embs.dtype)
-        
+
         return embs
-    
+
     def unembed(self, embs):
         if not self.training and self.merged_out is not None:
             return F.linear(embs, self.merged_out, self.bias_out)
 
         orig_embs = embs
         if self.hidden_to_emb: embs = self.hidden_to_emb(embs)
-        
+
         main_logits = (embs @ self.main.weight.to(embs.dtype).T).float()
-        
+
         if not self.special_codes:
             return main_logits
-        
+
         special_logits = (orig_embs @ self.special.weight.to(orig_embs.dtype).T).float()
         return torch.cat([main_logits, special_logits], dim=-1)

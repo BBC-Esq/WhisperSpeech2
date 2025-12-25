@@ -2,13 +2,12 @@ __all__ = ['Pipeline']
 
 from os.path import expanduser
 import torch
-from whisperspeech2.t2s_up_wds_mlang_enclm import TSARTransformer
-from whisperspeech2.s2a_delar_mup_wds_mlang import SADelARTransformer
-from whisperspeech2.a2wav import Vocoder
-from whisperspeech2 import inference, s2a_delar_mup_wds_mlang_cond
+from whisperspeech.t2s_up_wds_mlang_enclm import TSARTransformer
+from whisperspeech.s2a_delar_mup_wds_mlang import SADelARTransformer
+from whisperspeech.a2wav import Vocoder
+from whisperspeech import inference, s2a_delar_mup_wds_mlang_cond
 import traceback
 from pathlib import Path
-
 
 class Pipeline:
     default_speaker = torch.tensor(
@@ -37,15 +36,12 @@ class Pipeline:
         -0.8949,  0.0731,  0.0886,  0.3442, -0.1433, -0.6804,  0.2204,  0.1859,
          0.2702,  0.1699, -0.1443, -0.9614,  0.3261,  0.1718,  0.3545, -0.0686]
     )
-
-    def __init__(self, t2s_ref=None, s2a_ref=None, optimize=True, torch_compile=False, 
-                 use_cuda_graph=False, device=None, cache_dir=None):
+    
+    def __init__(self, t2s_ref=None, s2a_ref=None, optimize=True, torch_compile=False, use_cuda_graph=False, device=None):
         if device is None: device = inference.get_compute_device()
         self.device = device
         self.use_cuda_graph = use_cuda_graph
-        self._warmed_up = False
-
-        args = dict(device = device, cache_dir=cache_dir)
+        args = dict(device = device)
         try:
             if t2s_ref:
                 args["ref"] = t2s_ref
@@ -54,10 +50,10 @@ class Pipeline:
         except:
             print("Failed to load the T2S model:")
             print(traceback.format_exc())
-        args = dict(device = device, cache_dir=cache_dir)
+        args = dict(device = device)
         try:
             if s2a_ref:
-                spec = inference.load_model(ref=s2a_ref, device=device, cache_dir=cache_dir)
+                spec = inference.load_model(ref=s2a_ref, device=device)
                 if [x for x in spec['state_dict'].keys() if x.startswith('cond_embeddings.')]:
                     cls = s2a_delar_mup_wds_mlang_cond.SADelARTransformer
                     args['spec'] = spec
@@ -75,19 +71,11 @@ class Pipeline:
         self.vocoder = Vocoder(device=device)
         self.encoder = None
 
-    def warmup(self):
-        if not self.use_cuda_graph:
-            print("Warmup not needed when use_cuda_graph=False")
-            return
-
-        if self._warmed_up:
-            print("Already warmed up")
-            return
-
-        print("Warming up (CUDA graph capture)...")
-        _ = self.generate_atoks("Warmup.", speaker=self.default_speaker)
-        self._warmed_up = True
-        print("Warmup complete")
+    def reset_cuda_graphs(self):
+        if hasattr(self, 't2s') and hasattr(self.t2s, 'reset_cuda_graph'):
+            self.t2s.reset_cuda_graph()
+        if hasattr(self, 's2a') and hasattr(self.s2a, 'reset_cuda_graph'):
+            self.s2a.reset_cuda_graph()
 
     def extract_spk_emb(self, fname):
         import torchaudio
@@ -105,9 +93,9 @@ class Pipeline:
         samples = samples[:, :num_frames]
         samples = self.encoder.audio_normalizer(samples[0], sr)
         spk_emb = self.encoder.encode_batch(samples.unsqueeze(0))
-
+        
         return spk_emb[0,0].to(self.device)
-
+        
     def generate_atoks(self, text, speaker=None, lang='en', cps=15, step_callback=None):
         if speaker is None: speaker = self.default_speaker
         elif isinstance(speaker, (str, Path)): speaker = self.extract_spk_emb(speaker)
@@ -115,60 +103,12 @@ class Pipeline:
         stoks = self.t2s.generate(text, cps=cps, lang=lang, step=step_callback)[0]
         atoks = self.s2a.generate(stoks, speaker.unsqueeze(0), step=step_callback)
         return atoks
-
+        
     def generate(self, text, speaker=None, lang='en', cps=15, step_callback=None):
         return self.vocoder.decode(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))
-
+    
     def generate_to_file(self, fname, text, speaker=None, lang='en', cps=15, step_callback=None):
-        self.vocoder.decode_to_file(fname, self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))
-
+        self.vocoder.decode_to_file(fname, self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=None))
+        
     def generate_to_notebook(self, text, speaker=None, lang='en', cps=15, step_callback=None):
-        self.vocoder.decode_to_notebook(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))
-
-    def reset_cuda_graphs(self):
-        try:
-            if hasattr(self, 't2s') and hasattr(self.t2s, 'reset_cuda_graph'):
-                self.t2s.reset_cuda_graph()
-        except Exception:
-            pass
-        try:
-            if hasattr(self, 's2a') and hasattr(self.s2a, 'reset_cuda_graph'):
-                self.s2a.reset_cuda_graph()
-        except Exception:
-            pass
-        try:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
-        self._warmed_up = False
-
-    def cleanup(self):
-        self.reset_cuda_graphs()
-        try:
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
-
-    def warmup(self):
-        if not self.use_cuda_graph:
-            return
-
-        if self._warmed_up:
-            return
-
-        print("Warming up (CUDA graph capture)...")
-        try:
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            _ = self.generate_atoks("Warmup sentence for initialization.", speaker=self.default_speaker)
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            self._warmed_up = True
-            print("Warmup complete")
-        except Exception as e:
-            print(f"Warmup failed: {e}")
-            self.reset_cuda_graphs()
-            raise
+        self.vocoder.decode_to_notebook(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=None))

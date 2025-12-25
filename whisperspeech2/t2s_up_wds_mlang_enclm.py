@@ -1,7 +1,9 @@
-__all__ = ['Tunables', 'T2SEmbedding', 'Encoder', 'TSARTransformer']
+__all__ = ['load_dataset', 'rand', 'Tunables', 'T2SEmbedding', 'Encoder', 'TSARTransformer', 'make_model']
 
 import dataclasses
+import random
 import math
+import itertools
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,19 +15,119 @@ from fastprogress import progress_bar
 
 from pathlib import Path
 
-from whisperspeech2.modules import *
-from whisperspeech2 import languages, inference
+from whisperspeech.modules import *
+from whisperspeech import languages, inference
 
+import re
 
 class CharTokenizer:
     eot = 0
-    
+
     def encode(self, txt):
         return list(bytes(txt.strip(), 'utf-8'))
 
     def decode(self, tokens):
         return bytes(tokens).decode('utf-8')
+    
+def tokenizer(ikey, okey, length):
+    tok = CharTokenizer()
+    def _tokenizer(samples):
+        for s in samples:
+            toks = torch.tensor(tok.encode(s[ikey]))
+            s[okey] = F.pad(toks, (0, length - toks.shape[-1]), value=tok.eot)
+            yield s
+    return _tokenizer
 
+def ar_padder(ikey, okey, length, pad_token):
+    import numpy as np
+
+    def _ar_padder(samples):
+        for s in samples:
+            toks = s[ikey]
+            if isinstance(toks, (list, np.ndarray)): toks = torch.tensor(toks)
+            toks = toks.to(torch.long)
+            s['in_' +okey] = F.pad(toks, (1, length - toks.shape[-1] - 1), value=pad_token)
+            s['out_'+okey] = F.pad(toks, (0, length - toks.shape[-1]), value=pad_token)
+            yield s
+    return _ar_padder
+
+def char_per_seconder(txt_key, stoks_key, cps_key, stoks_per_second=25):
+    def _char_per_seconder(samples):
+        for s in samples:
+            secs = s[stoks_key].shape[-1] / stoks_per_second
+            s[cps_key] = len(s[txt_key]) / secs
+            yield s
+    return _char_per_seconder
+
+def load_dataset(
+    dataset_dir:Path,
+    stoks_dir:str=None,
+    txt_dir:str=None,
+    vq_codes:int=4096,
+    weight:float=1,
+    validation:bool=False,
+    exclude_datasets:str="txt-random-valid",
+):
+    import webdataset as wds
+    from whisperspeech import utils, languages
+
+    dataset_dir = Path(dataset_dir)
+    
+    if txt_dir is None:
+        for name in ['small.en-txt', 'medium-txt']:
+            if (dataset_dir/name).exists():
+                txt_dir = name
+                break
+    assert txt_dir is not None, f"No transcripts found in {dataset_dir}"
+
+    txt_path = dataset_dir/f'{txt_dir}/*.tar.gz'
+    shards = utils.shard_glob(txt_path)
+    assert len(shards), f"No data shards found in {txt_path}."
+
+    with open(dataset_dir/'txt-samples.list') as f: samples = len(f.readlines())
+    language = utils.readlines(dataset_dir/'language')[0]
+    language = languages.to_id(language)
+
+    excludes = {x
+                for dir in exclude_datasets.split()
+                for x in utils.readlines(dataset_dir/Path(dir)/"txt-samples.list")
+               } if not validation and exclude_datasets else set()
+
+    def set_language(x):
+        x['language'] = language
+        return x
+    
+    same_on_all_nodes = lambda urls: urls
+    ds = wds.WebDataset(shards, resampled=not validation, nodesplitter=same_on_all_nodes).compose(
+        wds.decode(),
+        utils.merge_in(utils.derived_dataset(stoks_dir)),
+        wds.select(lambda s: s['__key__'] not in excludes and len(s['stoks.npy']) > 0),
+        tokenizer('txt', 'ttoks', length=550),
+        ar_padder('stoks.npy', 'stoks', length=750, pad_token=vq_codes-1),
+        ar_padder('ttoks', 'ttoks', length=550, pad_token=CharTokenizer.eot),
+        char_per_seconder('txt', 'stoks.npy', 'cps', stoks_per_second=25),
+        wds.map(set_language),
+        wds.to_tuple('in_ttoks', 'out_ttoks', 'language', 'cps', 'in_stoks', 'out_stoks'),
+    )
+    if validation:
+        ds = ds.compose(
+            wds.batched(samples)
+        ).slice(1)
+    else:
+        ds = ds.compose(
+            wds.shuffle(20000, initial=20000),
+            wds.batched(2048)
+        )
+    ds.total_samples = samples
+    ds.stoks_len = 750
+    ds.stoks_codes = vq_codes
+    ds.ttoks_len = 550
+    ds.weight = weight
+
+    return ds
+
+def rand(start, end):
+    return random.random() * (end - start) + start
 
 @dataclasses.dataclass
 class Tunables:
@@ -47,16 +149,28 @@ class Tunables:
     weight_decay :float = 1e-1
     warmup_steps :float = 4000
 
+    random :bool = False
+
+    def __post_init__(self):
+        if self.random:
+            self.init_std = 10**rand(-1,1)
+            self.embeddings_std = 10**rand(-3,-.7)
+            self.embeddings_lr_scale = rand(2,6)
+            self.output_mult = rand(0.25,0.65)
+            self.query_mult = 2**rand(-2,3)
+            self.encoder_depth_ratio = 0.25
+
+            self.lr0 = rand(1,5)*1e-3
+            self.clip_gradient_norm = 10**rand(-3,0)
+            self.warmup_steps = 100*(10**rand(1,1.85))
+
     @staticmethod
     def upgrade(args):
         args = {k:v for k,v in args.items()}
         def old_default(name, value):
             if name not in args: args[name] = value
         old_default('padding_token_offset', -1)
-        for k in ['random', 'random_finetune']:
-            args.pop(k, None)
         return args
-
 
 class T2SEmbedding(nn.Module):
     def __init__(self, length=1500, codes=1024, width=384, pos_embs=None, stoks_width=384):
@@ -70,7 +184,6 @@ class T2SEmbedding(nn.Module):
         xin = (Sembs + self.positional_embedding[offset : offset + Sembs.shape[1]]).to(xenc.dtype)
         if cps is not None: xin = xin + cps
         return xin, offset
-
 
 class Encoder(nn.Module):
     def __init__(self, depth=6, width=384, n_head=6, length=1500, codes=1024, emb_width=384, ffn_mult=4, pos_embs=None, tunables=Tunables()):
@@ -89,24 +202,23 @@ class Encoder(nn.Module):
         ])
 
         self.ln_post = LayerNorm(width)
-
+        
         mask = torch.empty(length, length).fill_(-torch.inf).triu_(1)
         self.register_buffer("mask", mask, persistent=False)
-
+        
     def forward(self, Stoks, positions, lang_emb=None):
         xin = self.embedding(Stoks)
 
         if lang_emb is not None: xin = xin + lang_emb
-
+        
         x = (xin +
              self.positional_embedding[positions]).to(xin.dtype)
 
         for l in self.layers: x = l(x, positions,
                                     causal=self.tunables.causal_encoder and self.training,
                                     mask=self.mask if self.tunables.causal_encoder and not self.training else None)
-
+        
         return self.ln_post(x)
-
 
 class TSARTransformer(nn.Module):
     def __init__(self, depth=6, n_head=6, head_width=64, ffn_mult=4,
@@ -143,11 +255,18 @@ class TSARTransformer(nn.Module):
         )
         self.tokenizer = None
 
+        self.cuda_graph = None
+        self.cuda_graph_warmup_done = False
+        self.static_toks = None
+        self.static_positions = None
+        self.static_cps_emb = None
+        self.static_xenc = None
+        self.static_xenc_positions = None
+        self.static_T = None
+        self.static_top_k = None
+        self.static_output = None
+        self.static_exponential_noise = None
         self.use_cuda_graph = False
-        self._cuda_graph = None
-        self._static_toks = None
-        self._static_positions = None
-        self._static_output = None
 
         self.apply(self.init_transformer)
 
@@ -183,7 +302,7 @@ class TSARTransformer(nn.Module):
             m.no_weight_decay = True
             torch.nn.init.constant_(m.bias, 0)
             torch.nn.init.constant_(m.weight, 1)
-
+    
     def _embed_cps(self, cpss):
         if self.cps_embeddings is None: return None
 
@@ -198,9 +317,8 @@ class TSARTransformer(nn.Module):
 
         cps_emb = self._embed_cps(cpss)
 
-        with record_function("encoder"):
-            positions = torch.arange(0, in_ttoks.shape[1], device=in_ttoks.device)
-            xenc = self.encoder(in_ttoks.to(torch.long), positions, lang_emb=lang_embs)
+        positions = torch.arange(0, in_ttoks.shape[1], device=in_ttoks.device)
+        xenc = self.encoder(in_ttoks.to(torch.long), positions, lang_emb=lang_embs)
 
         return xenc, positions, cps_emb
 
@@ -208,26 +326,24 @@ class TSARTransformer(nn.Module):
         if xenc is None:
             xenc, xenc_positions, cps_emb = self.run_encoder(in_ttoks, languages, cpss)
 
-        with record_function("decoder"):
-            x = (self.embeddings.embedding(in_stoks) + 
-                 self.embeddings.positional_embedding[in_stoks_positions] +
-                 cps_emb).to(xenc[0].dtype)
-            x = self.decoder(x, in_stoks_positions, xenc.clone(), xenc_positions)
-            logits = self.embeddings.embedding.unembed(x)
-            logits = logits * self.tunables.output_mult / (self.width / self.base_width)
+        x = (self.embeddings.embedding(in_stoks) + 
+             self.embeddings.positional_embedding[in_stoks_positions] +
+             cps_emb).to(xenc[0].dtype)
+        x = self.decoder(x, in_stoks_positions, xenc.clone(), xenc_positions)
+        logits = self.embeddings.embedding.unembed(x)
+        logits = logits * self.tunables.output_mult / (self.width / self.base_width)
 
         if loss is not None:
-            with record_function("loss"):
-                loss = F.cross_entropy(logits.transpose(-1,-2), out_stoks)
-                if self.training and self.tunables.causal_encoder:
-                    enc_logits = self.encoder.embedding.unembed(xenc)
-                    enc_logits = enc_logits * self.tunables.output_mult / (self.width / self.base_width)
-                    loss += 0.1 * F.cross_entropy(enc_logits.transpose(-1,-2), out_ttoks)
+            loss = F.cross_entropy(logits.transpose(-1,-2), out_stoks)
+            if self.training and self.tunables.causal_encoder:
+                enc_logits = self.encoder.embedding.unembed(xenc)
+                enc_logits = enc_logits * self.tunables.output_mult / (self.width / self.base_width)
+                loss += 0.1 * F.cross_entropy(enc_logits.transpose(-1,-2), out_ttoks)
 
         return logits, loss
 
     @classmethod
-    def load_model(cls, ref="WhisperSpeech/WhisperSpeech:t2s-small-en+pl.model",
+    def load_model(cls, ref="collabora/whisperspeech:t2s-small-en+pl.model",
                    repo_id=None, filename=None, local_filename=None, spec=None, device=None, cache_dir=None):
         if repo_id is None and filename is None and local_filename is None and spec is None:
             if ":" in ref:
@@ -242,6 +358,17 @@ class TSARTransformer(nn.Module):
         model.load_state_dict(spec['state_dict'])
         model.eval().to(device)
         return model
+
+    def load_checkpoint(self, local_filename_or_obj):
+        if isinstance(local_filename_or_obj, (str, Path)):
+            spec = torch.load(local_filename_or_obj, map_location='cpu')
+        else:
+            spec = local_filename_or_obj
+        assert 'pytorch-lightning_version' in spec, 'not a valid PyTorch Lightning checkpoint'
+        state_dict = {k.replace('model.', ''):v
+                      for k,v in spec['state_dict'].items()}
+        self.load_state_dict(state_dict)
+        return self
 
     def save_model(self, fname):
         torch.save(dict(config = self.__stored_args__,
@@ -260,8 +387,8 @@ class TSARTransformer(nn.Module):
             for bn,b in m.named_buffers(recurse=False):
                 setattr(m,bn,b.to(dtype))
 
-    def optimize(self, max_batch_size=1, dtype=torch.float16, torch_compile=True, use_cuda_graph=False):
-        for emb in [self.encoder.embedding, self.embeddings.embedding]:
+    def optimize(self, max_batch_size=1, dtype=torch.float16, torch_compile=False, use_cuda_graph=False):
+        for emb in [self.embeddings.embedding, self.embeddings.embedding]:
             emb.convert_for_eval()
         for l in self.encoder.layers:
             l.attn.convert_for_eval()
@@ -270,11 +397,104 @@ class TSARTransformer(nn.Module):
             l.cross_attn.convert_for_eval()
             l.setup_kv_cache(max_batch_size, self.stoks_len, self.ttoks_len)
         self.switch_dtypes(dtype)
-
         self.use_cuda_graph = use_cuda_graph
-
         if torch_compile:
             self.generate_next = torch.compile(self.generate_next, mode="reduce-overhead", fullgraph=True)
+
+    def _sample_with_static_noise(self, logits, T, top_k):
+        T_val = T if isinstance(T, torch.Tensor) else torch.tensor(T, device=logits.device)
+        T_clamped = torch.clamp(T_val, min=1e-5)
+        logits = logits / T_clamped
+        
+        if top_k is not None:
+            v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+            pivot = v.select(-1, -1).unsqueeze(-1)
+            logits = torch.where(logits < pivot, -float("Inf"), logits)
+        
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+        self.static_exponential_noise.exponential_(1)
+        return torch.argmax(probs / self.static_exponential_noise, dim=-1, keepdim=True).to(dtype=torch.int)
+
+    def _init_cuda_graph_buffers(self, bs, xenc, xenc_positions, cps_emb, T, top_k):
+        dev = self.device
+        self.static_toks = torch.zeros((bs, 1), dtype=torch.long, device=dev)
+        self.static_positions = torch.zeros((1,), dtype=torch.long, device=dev)
+        self.static_xenc = xenc.clone()
+        self.static_xenc_positions = xenc_positions.clone()
+        self.static_cps_emb = cps_emb.clone()
+        self.static_T = T.clone() if isinstance(T, torch.Tensor) else torch.tensor(T, device=dev)
+        self.static_top_k = top_k
+        
+        logits_shape = (bs, self.stoks_codes + 1)
+        self.static_exponential_noise = torch.empty(logits_shape, device=dev, dtype=torch.float32)
+
+    def _generate_one_for_graph(self, toks, toks_positions, cps_emb, xenc, xenc_positions, T, top_k):
+        x = (self.embeddings.embedding(toks) + 
+             self.embeddings.positional_embedding[toks_positions] +
+             cps_emb).to(xenc[0].dtype)
+        x = self.decoder(x, toks_positions, xenc.clone(), xenc_positions)
+        logits = self.embeddings.embedding.unembed(x)
+        logits = logits * self.tunables.output_mult / (self.width / self.base_width)
+        logits = logits[:,-1]
+        logits[:,self.embeddings.embedding.codes:] = -torch.inf
+        return self._sample_with_static_noise(logits, T, top_k)
+
+    def _capture_cuda_graph(self):
+        s = torch.cuda.Stream()
+        s.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(s):
+            for _ in range(3):
+                self.static_output = self._generate_one_for_graph(
+                    self.static_toks,
+                    self.static_positions,
+                    self.static_cps_emb,
+                    self.static_xenc,
+                    self.static_xenc_positions,
+                    self.static_T,
+                    self.static_top_k
+                )
+        torch.cuda.current_stream().wait_stream(s)
+        
+        self.cuda_graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.cuda_graph):
+            self.static_output = self._generate_one_for_graph(
+                self.static_toks,
+                self.static_positions,
+                self.static_cps_emb,
+                self.static_xenc,
+                self.static_xenc_positions,
+                self.static_T,
+                self.static_top_k
+            )
+        self.cuda_graph_warmup_done = True
+
+    def _cuda_graph_generate_one(self, toks, positions):
+        self.static_toks.copy_(toks)
+        self.static_positions.copy_(positions)
+        self.cuda_graph.replay()
+        return self.static_output.clone()
+
+    def _update_static_buffers(self, xenc, xenc_positions, cps_emb):
+        self.static_xenc.copy_(xenc)
+        self.static_xenc_positions.copy_(xenc_positions)
+        self.static_cps_emb.copy_(cps_emb)
+
+    def reset_cuda_graph(self):
+        self.cuda_graph = None
+        self.cuda_graph_warmup_done = False
+        self.static_toks = None
+        self.static_positions = None
+        self.static_cps_emb = None
+        self.static_xenc = None
+        self.static_xenc_positions = None
+        self.static_T = None
+        self.static_top_k = None
+        self.static_output = None
+        self.static_exponential_noise = None
+
+    def optimize_training(self):
+        self.encoder = torch.compile(self.encoder, fullgraph=True, mode="reduce-overhead")
+        self.decoder = torch.compile(self.decoder, fullgraph=True, mode="reduce-overhead")
 
     @property
     def device(self):
@@ -283,60 +503,20 @@ class TSARTransformer(nn.Module):
     def generate_one(self, toks, toks_positions, cps_emb, xenc, xenc_positions, T, top_k):
         probs, _ = self(None, None, None, None, toks, in_stoks_positions=toks_positions, loss=None, xenc=xenc, xenc_positions=xenc_positions, cps_emb=cps_emb)
         probs = probs[:,-1]
-        probs[self.embeddings.embedding.codes:] = -torch.inf
+        probs[:,self.embeddings.embedding.codes:] = -torch.inf
         return inference.sample(probs, T, top_k)
 
     def generate_next(self, *args, **kwargs):
         return self.generate_one(*args, **kwargs)
 
-    def _init_cuda_graph_buffers(self, bs, dev):
-        self._static_toks = torch.zeros((bs, 1), dtype=torch.long, device=dev)
-        self._static_positions = torch.zeros((1,), dtype=torch.long, device=dev)
-        self._static_output = torch.zeros((bs, 1), dtype=torch.long, device=dev)
-        self._graph_batch_size = bs
-    
-    def _capture_cuda_graph(self, cps_emb, xenc, xenc_positions, T, top_k):
-        self._cuda_graph = None
-
-        torch.cuda.synchronize()
-
-        self._cuda_graph = torch.cuda.CUDAGraph()
-
-        self._graph_cps_emb = cps_emb
-        self._graph_xenc = xenc
-        self._graph_xenc_positions = xenc_positions
-        self._graph_T = T
-        self._graph_top_k = top_k
-
-        with torch.cuda.graph(self._cuda_graph):
-            self._static_output = self.generate_one(
-                self._static_toks,
-                self._static_positions,
-                self._graph_cps_emb,
-                self._graph_xenc,
-                self._graph_xenc_positions,
-                self._graph_T,
-                self._graph_top_k
-            )
-        torch.cuda.synchronize()
-
-    def _run_cuda_graph(self, toks, positions):
-        self._static_toks.copy_(toks)
-        self._static_positions.copy_(positions)
-        self._cuda_graph.replay()
-        return self._static_output.clone()
-
-    def reset_cuda_graph(self):
-        self._cuda_graph = None
-        self._static_toks = None
-        self._static_positions = None
-        self._static_output = None
-        self._graph_batch_size = None
-        self._graph_cps_emb = None
-        self._graph_xenc = None
-        self._graph_xenc_positions = None
-        self._graph_T = None
-        self._graph_top_k = None
+    @torch.no_grad()
+    def prep(self, txt, cps=15, lang="en"):
+        dev = self.device
+        ttoks = torch.tensor(self.tokenizer.encode(txt), device=dev)
+        ttoks = F.pad(ttoks, (0, self.ttoks_len - len(ttoks)), value=self.tokenizer.eot).unsqueeze(0)
+        cpss = torch.tensor([cps], device=dev)
+        langs = torch.tensor([languages.to_id(lang)], device=dev)
+        return ttoks, cpss, langs
 
     @torch.no_grad()
     def generate(self, txt, cps=15, lang="en", stoks_prompt=None, N=None, bs=1, T=0.7, top_k=None, step=None, show_progress_bar=True):
@@ -367,66 +547,86 @@ class TSARTransformer(nn.Module):
             langs = torch.tensor(langs, device=dev)
             langs = F.pad(langs, (1, self.ttoks_len - len(langs) - 1), value=languages.to_id(lang0))
 
-        toks = torch.zeros((bs, N), dtype=torch.long, device=dev)
-        toks[:, 0] = self.stoks_codes + self.tunables.padding_token_offset
+        toks = torch.zeros((bs,N), dtype=torch.long, device=dev)
+        toks[:,0] = self.stoks_codes + self.tunables.padding_token_offset
         start = 0
         if stoks_prompt is not None:
-            toks[:, 1:len(stoks_prompt)+1] = stoks_prompt
+            toks[:,1:len(stoks_prompt)+1] = stoks_prompt
             start = len(stoks_prompt)
+        it = range(start+1,N-1)
+        if show_progress_bar: it = progress_bar(it)
 
         toks_positions = torch.arange(N, device=dev)
+        ttoks = ttoks.repeat(bs, 1)
+        langs, cpss = [x.repeat(bs) for x in (langs, cpss)]
+        xenc, xenc_positions, cps_emb = self.run_encoder(ttoks, langs, cpss)
+        toks_positions = torch.arange(N+1, device=dev)
         
-        with record_function("encode"):
-            ttoks = ttoks.repeat(bs, 1)
-            langs, cpss = [x.repeat(bs) for x in (langs, cpss)]
-            xenc, xenc_positions, cps_emb = self.run_encoder(ttoks, langs, cpss)
-
-        with record_function("prefill"):
-            toks[:, start+1] = self.generate_one(
-                toks[:, :start+1].contiguous(), 
-                toks_positions[:start+1], 
-                cps_emb, xenc, xenc_positions, T, top_k
-            )[:, 0]
-
-        it = range(start + 1, N - 1)
-        if show_progress_bar: 
-            it = progress_bar(it)
-
-        with inference.inference_context():
-            if self.use_cuda_graph and dev.type == 'cuda':
-                if self._static_toks is None or self._graph_batch_size != bs:
-                    self._init_cuda_graph_buffers(bs, dev)
-
-                capture_pos = start + 1
-                self._static_toks.copy_(toks[:, capture_pos:capture_pos+1])
-                self._static_positions.copy_(toks_positions[capture_pos:capture_pos+1])
-                self._capture_cuda_graph(cps_emb, xenc, xenc_positions, T, top_k)
-                toks[:, capture_pos+1] = self._static_output[:, 0]
-                graph_start = capture_pos + 1
-
-                for i in it:
-                    if i < graph_start:
-                        continue
-
-                    self._static_toks.copy_(toks[:, i:i+1])
-                    self._static_positions.copy_(toks_positions[i:i+1])
-                    self._cuda_graph.replay()
-                    toks[:, i+1] = self._static_output[:, 0]
-
-                    if (toks[:, i+1] == self.stoks_codes + self.tunables.padding_token_offset).all():
-                        return toks[:, 1:i+2]
-                    if step is not None: 
-                        step()
+        if self.use_cuda_graph and not self.cuda_graph_warmup_done:
+            self._init_cuda_graph_buffers(bs, xenc, xenc_positions, cps_emb, T, top_k)
+            self._capture_cuda_graph()
+        elif self.use_cuda_graph and self.cuda_graph_warmup_done:
+            self._update_static_buffers(xenc, xenc_positions, cps_emb)
+        
+        toks[:,start+1] = self.generate_one(toks[:,:start+1].contiguous(), toks_positions[:start+1], cps_emb, xenc, xenc_positions, T, top_k)[:,0]
+        
+        for i in it:
+            if self.use_cuda_graph and self.cuda_graph_warmup_done:
+                toks[:,i+1] = self._cuda_graph_generate_one(toks[:,i:i+1], toks_positions[i:i+1])[:,0]
             else:
-                for i in it:
-                    toks[:, i+1] = self.generate_next(
-                        toks[:, i:i+1], 
-                        toks_positions[i:i+1], 
-                        cps_emb, xenc, xenc_positions, T, top_k
-                    )[:, 0]
-                    if (toks[:, i+1] == self.stoks_codes + self.tunables.padding_token_offset).all():
-                        return toks[:, 1:i+2]
-                    if step is not None: 
-                        step()
+                toks[:,i+1] = self.generate_next(toks[:,i:i+1], toks_positions[i:i+1], cps_emb, xenc, xenc_positions, T, top_k)[:,0]
+            if (toks[:,i+1] == self.stoks_codes+self.tunables.padding_token_offset).all(): return toks[:,1:i+1]
 
-        return toks[:, 1:]
+            if step is not None: step()
+        return toks[:,1:]
+
+    @torch.no_grad()
+    def generate_batch(self, txts, N=None, T=1.1, top_k=7, show_progress_bar=True):
+        self.ensure_tokenizer()
+        N = self.stoks_len
+        dev = self.device
+        ttoks = []
+        for txt in txts:
+            ttoks_ = torch.tensor(self.tokenizer.encode(txt), device=dev)
+            ttoks_ = F.pad(ttoks_, (0, self.ttoks_len - len(ttoks_)), value=self.tokenizer.eot).unsqueeze(0)
+            ttoks.append(ttoks_)
+        ttoks = torch.cat(ttoks, dim=0)
+        toks = torch.zeros((len(ttoks),N), dtype=torch.long, device=dev)
+        it = range(N)
+        if show_progress_bar: it = progress_bar(it)
+        for i in it:
+            p, _ = self(ttoks, toks[:,:i], loss=None)
+            last_p = p[:,-1]
+            if top_k:
+                last_p[last_p < torch.topk(last_p, top_k).values[:,-1,None]] = -torch.inf
+            tok = torch.multinomial((last_p / float(T)).softmax(-1), 1)
+            toks[:,i] = tok[:,0]
+            if (toks[:,i] == self.stoks_codes-1).all(): return toks[:,:i]
+        return toks
+
+def _make_model(size:str, tunables:Tunables=Tunables(), dataset=None, **kwargs):
+    kwargs = dict(stoks_len = dataset.stoks_len, ttoks_len = dataset.ttoks_len, tunables=tunables, **kwargs)
+    if 'stoks_codes' not in kwargs: kwargs['stoks_codes'] = dataset.stoks_codes
+    if size == 'micro':
+        return TSARTransformer(depth=2, n_head=3, ffn_mult=1, **kwargs)
+    if size == 'tiny':
+        return TSARTransformer(depth=4, n_head=6, **kwargs)
+    if size == 'base':
+        return TSARTransformer(depth=6, n_head=8, **kwargs)
+    if size == 'small':
+        return TSARTransformer(depth=12, n_head=12, **kwargs)
+    if size == 'small+':
+        return TSARTransformer(depth=12, n_head=16, **kwargs)
+    if size == 'medium':
+        return TSARTransformer(depth=24, n_head=16, **kwargs)
+
+def make_model(size:str, frozen_embeddings_model:str=None, tunables:Tunables=Tunables(), dataset:torch.utils.data.Dataset=None):
+    from whisperspeech import vq_stoks
+
+    if frozen_embeddings_model:
+        vqmodel = vq_stoks.RQBottleneckTransformer.load_model(frozen_embeddings_model)
+        model = _make_model(size, tunables, dataset, stoks_codes=vqmodel.vq_codes+1, stoks_width=vqmodel.rq.layers[0]._codebook.embed[0].shape[-1])
+        model.load_frozen_semantic_embeddings(vqmodel)
+    else:
+        model = _make_model(size, tunables, dataset, mode=mode)
+    return model
