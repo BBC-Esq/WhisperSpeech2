@@ -56,7 +56,8 @@ The fine folks at the [Dia2](https://github.com/nari-labs/dia2) for forcing me t
 
 # BIG FUCK YOU
 
-And finally a big "fuck you" to Microsoft for installing shit on my computer that I don't need and/or want for years.<p>Your pathetic VibeVoice project just got pwned!
+And finally a big "fuck you" to Microsoft for installing shit on my computer that I don't need and/or want for years.<p>Your pathetic VibeVoice project just got pwned!<p> You can end support for Windows 10 but still find ways to surreptously install Microsoft Edge, the shittest browser ever, on my computer without notification or approval whatsoever, again, fuck you!
+
 
 
 
