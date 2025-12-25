@@ -38,7 +38,7 @@ You can mix and match the models for different quality and compute requirements.
 
 ## Benchmark (no cuda graph)
 
-<img width="3680" height="1800" alt="image" src="https://github.com/user-attachments/assets/2efc192c-2d1a-4f6d-a5fc-91c3783c161e" />
+<img width="1871" height="964" alt="image" src="https://github.com/user-attachments/assets/ffba19ae-360c-4bbe-9f25-da8a95fad9ec" />
 
 ## Benchmark (with cuda graph)
 > People with Nvidia GPUs can set the "use_cuda_graph" parameter to "true" for fastger processing and less VRAM usage.
@@ -57,4 +57,5 @@ The fine folks at the [Dia2](https://github.com/nari-labs/dia2) for forcing me t
 # BIG FUCK YOU
 
 And finally a big "fuck you" to Microsoft for installing shit on my computer that I don't need and/or want for years.<p>Your pathetic VibeVoice project just got pwned!
+
 
