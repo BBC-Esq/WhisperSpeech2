@@ -8,8 +8,8 @@ An Open Source text-to-speech system built by inverting Whisper. This is a fork 
 pip install whisperspeech2
 ```
 
-> [PyTorch](https://pytorch.org/get-started/locally/)
-> CUDA libraries (if using an Nvidia GPU).
+> [PyTorch](https://pytorch.org/get-started/locally/)<p>
+> [CUDA](https://developer.nvidia.com/cuda-toolkit-archive) libraries if using an Nvidia GPU (tested with CUDA 12.8).
 
 ## Available Models
 
@@ -57,5 +57,6 @@ The fine folks at the [Dia2](https://github.com/nari-labs/dia2) for forcing me t
 # BIG FUCK YOU
 
 And finally a big "fuck you" to Microsoft for installing shit on my computer that I don't need and/or want for years.<p>Your pathetic VibeVoice project just got pwned!
+
 
 
