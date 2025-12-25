@@ -41,7 +41,6 @@ For more details about each model, visit the [WhisperSpeech Hugging Face reposit
 | Small (Q4) | `WhisperSpeech/WhisperSpeech:s2a-q4-small-en+pl.model` |
 | HQ Fast (Q4) | `WhisperSpeech/WhisperSpeech:s2a-q4-hq-fast-en+pl.model` |
 | v1.1 Small | `WhisperSpeech/WhisperSpeech:s2a-v1.1-small-en+pl.model` |
-| v1.95 Small Fast | `WhisperSpeech/WhisperSpeech:s2a-v1.95-small-fast-en.model` |
 
 ### T2S Models (Text to Semantic)
 
@@ -53,7 +52,6 @@ For more details about each model, visit the [WhisperSpeech Hugging Face reposit
 | Fast Small | `WhisperSpeech/WhisperSpeech:t2s-fast-small-en+pl.model` |
 | Fast Medium | `WhisperSpeech/WhisperSpeech:t2s-fast-medium-en+pl+yt.model` |
 | HQ Fast | `WhisperSpeech/WhisperSpeech:t2s-hq-fast-en+pl.model` |
-| v1.1 Small | `WhisperSpeech/WhisperSpeech:t2s-v1.1-small-en+pl.model` |
 
 ## Benchmark (no cuda graph)
 
@@ -62,7 +60,8 @@ For more details about each model, visit the [WhisperSpeech Hugging Face reposit
 ## Benchmark (with cuda graph)
 > People with Nvidia GPUs can set the "use_cuda_graph" parameter to "true" and it'll offer the following speedups:
 
-<img width="2424" height="1170" alt="image" src="https://github.com/user-attachments/assets/ba8d404c-1118-47d2-ab6f-17014a651280" />
+<img width="1703" height="874" alt="image" src="https://github.com/user-attachments/assets/84874c8a-aad7-49ac-bb82-eb6162694376" />
+
 
 <details>
 
@@ -143,6 +142,7 @@ See the `examples/` directory for more usage examples including GUI applications
 
 MIT License
 ```
+
 
 
 
