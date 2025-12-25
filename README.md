@@ -19,10 +19,10 @@ You can mix and match the models for different quality and compute requirements.
 
 | Model | Reference |
 |-------|-----------|
-| Tiny (Q4) | `WhisperSpeech/WhisperSpeech:s2a-q4-tiny-en+pl.model` |
-| Base (Q4) | `WhisperSpeech/WhisperSpeech:s2a-q4-base-en+pl.model` |
-| Small (Q4) | `WhisperSpeech/WhisperSpeech:s2a-q4-small-en+pl.model` |
-| HQ Fast (Q4) | `WhisperSpeech/WhisperSpeech:s2a-q4-hq-fast-en+pl.model` |
+| Tiny | `WhisperSpeech/WhisperSpeech:s2a-q4-tiny-en+pl.model` |
+| Base | `WhisperSpeech/WhisperSpeech:s2a-q4-base-en+pl.model` |
+| Small | `WhisperSpeech/WhisperSpeech:s2a-q4-small-en+pl.model` |
+| HQ Fast | `WhisperSpeech/WhisperSpeech:s2a-q4-hq-fast-en+pl.model` |
 | v1.1 Small | `WhisperSpeech/WhisperSpeech:s2a-v1.1-small-en+pl.model` |
 
 ### T2S Models (Text to Semantic)
@@ -57,3 +57,4 @@ The fine folks at the [Dia2](https://github.com/nari-labs/dia2) for forcing me t
 # BIG FUCK YOU
 
 And finally a big "fuck you" to Microsoft for installing shit on my computer that I don't need and/or want for years.<p>Your pathetic VibeVoice project just got pwned!
+
