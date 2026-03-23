@@ -42,6 +42,10 @@ model_ref = 'collabora/whisperspeech:s2a-q4-base-en+pl.model'
 
 pipe = Pipeline(s2a_ref=model_ref)
 
+# Available speaker presets: "default", "classic", "voice_b"
+# You can also pass a path to an audio file for voice cloning (requires speechbrain)
+speaker = "default"
+
 audio_queue = queue.Queue()
 
 class TextUtilities:
@@ -71,7 +75,7 @@ class TextUtilities:
 def process_text_to_audio(sentences, pipe):
     for sentence in sentences:
         if sentence:
-            audio_tensor = pipe.generate(sentence)
+            audio_tensor = pipe.generate(sentence, speaker=speaker)
             audio_np = (audio_tensor.cpu().numpy() * 32767).astype(np.int16)
             if len(audio_np.shape) == 1:
                 audio_np = np.expand_dims(audio_np, axis=0)

@@ -21,5 +21,7 @@ tts_pipe = Pipeline(s2a_ref='collabora/whisperspeech:s2a-q4-tiny-en+pl.model')
 # tts_pipe = Pipeline(s2a_ref='collabora/whisperspeech:s2a-q4-base-en+pl.model')
 # tts_pipe = Pipeline(s2a_ref='collabora/whisperspeech:s2a-q4-small-en+pl.model')
 
+# Available speaker presets: "default", "classic", "voice_b"
+# You can also pass a path to an audio file for voice cloning (requires speechbrain)
 save_path = 'output.wav'
-tts_pipe.generate_to_file(save_path, "This is a test")
+tts_pipe.generate_to_file(save_path, "This is a test", speaker="default")

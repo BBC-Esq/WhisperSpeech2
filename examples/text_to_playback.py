@@ -34,7 +34,9 @@ text = """
 This is some sample text. You would add text here that you want spoken and then only leave one of the above lines uncommented for the model you want to test.
 """
 
-audio_tensor = pipe.generate(text)
+# Available speaker presets: "default", "classic", "voice_b"
+# You can also pass a path to an audio file for voice cloning (requires speechbrain)
+audio_tensor = pipe.generate(text, speaker="default")
 audio_np = (audio_tensor.cpu().numpy() * 32767).astype(np.int16)
 if len(audio_np.shape) == 1:
     audio_np = np.expand_dims(audio_np, axis=0)

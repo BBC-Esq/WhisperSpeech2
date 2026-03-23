@@ -10,6 +10,16 @@ All scripts require:
 2. `pip install whisperspeech2`
 3. `pip install sounddevice` (for audio playback scripts)
 
+## Speaker Presets
+
+All scripts support speaker voice selection via the `speaker` parameter:
+
+- `"default"` — The default voice
+- `"classic"` — The original WhisperSpeech default voice
+- `"voice_b"` — An alternative voice
+
+You can also pass a path to an audio file for voice cloning, which requires the optional `speechbrain` dependency (`pip install speechbrain`).
+
 ---
 
 ### `minimal.py`
