@@ -40,7 +40,7 @@ setuptools.setup(
     include_package_data = True,
     install_requires = requirements,
     extras_require={
-        'speaker': ['speechbrain<1.0'],
+        'speaker': ['speechbrain>=1.0'],
     },
     python_requires  = '>=' + cfg['min_python'],
     long_description = open('README.md').read(),

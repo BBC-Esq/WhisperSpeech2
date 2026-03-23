@@ -3,6 +3,7 @@ __all__ = ['Vocoder']
 from vocos import Vocos
 from whisperspeech2 import inference
 import torch
+import numpy as np
 
 class Vocoder:
     def __init__(self, repo_id="charactr/vocos-encodec-24khz", device=None, cache_dir=None):
@@ -30,31 +31,43 @@ class Vocoder:
         return self.vocos.decode(features, bandwidth_id=bandwidth_id)
 
     def _save_audio(self, fname, audio_tensor, sample_rate=24000):
+        audio_np = audio_tensor.cpu().numpy()
+        if audio_np.ndim > 1:
+            audio_np = audio_np.squeeze()
+
         try:
-            import torchaudio
-            torchaudio.save(fname, audio_tensor, sample_rate, backend="soundfile")
-            return
-        except (ImportError, RuntimeError, TypeError):
-            pass
-        
-        try:
-            import torchaudio
-            torchaudio.save(fname, audio_tensor, sample_rate)
-            return
-        except (ImportError, RuntimeError):
-            pass
-        
-        try:
-            import soundfile as sf
-            audio_np = audio_tensor.numpy().T
-            sf.write(fname, audio_np, sample_rate)
+            import av
+            output = av.open(str(fname), mode='w')
+            stream = output.add_stream('pcm_s16le', rate=sample_rate, layout='mono')
+            audio_int16 = (np.clip(audio_np, -1.0, 1.0) * 32767).astype(np.int16)
+            frame = av.AudioFrame.from_ndarray(audio_int16.reshape(1, -1), format='s16', layout='mono')
+            frame.sample_rate = sample_rate
+            for pkt in stream.encode(frame):
+                output.mux(pkt)
+            for pkt in stream.encode(None):
+                output.mux(pkt)
+            output.close()
             return
         except ImportError:
             pass
-        
+
+        try:
+            import soundfile as sf
+            sf.write(str(fname), audio_np, sample_rate)
+            return
+        except ImportError:
+            pass
+
+        try:
+            import torchaudio
+            torchaudio.save(str(fname), audio_tensor, sample_rate)
+            return
+        except (ImportError, RuntimeError):
+            pass
+
         raise ImportError(
-            "No audio backend available. Please install either torchaudio or soundfile:\n"
-            "  pip install torchaudio\n"
+            "No audio saving backend available. Please install PyAV or soundfile:\n"
+            "  pip install av\n"
             "or\n"
             "  pip install soundfile"
         )

@@ -2,12 +2,62 @@ __all__ = ['Pipeline']
 
 from os.path import expanduser
 import torch
+import numpy as np
 from whisperspeech2.t2s_up_wds_mlang_enclm import TSARTransformer
 from whisperspeech2.s2a_delar_mup_wds_mlang import SADelARTransformer
 from whisperspeech2.a2wav import Vocoder
 from whisperspeech2 import inference, s2a_delar_mup_wds_mlang_cond
 import traceback
 from pathlib import Path
+
+
+def _load_audio(fname, max_seconds=None):
+    try:
+        import av
+        container = av.open(str(fname))
+        stream = container.streams.audio[0]
+        sample_rate = stream.rate
+        frames = []
+        samples_collected = 0
+        max_samples = int(sample_rate * max_seconds) if max_seconds else None
+        for frame in container.decode(audio=0):
+            arr = frame.to_ndarray()
+            if arr.ndim == 2 and arr.shape[0] > 1:
+                arr = arr[0:1]
+            frames.append(arr)
+            samples_collected += arr.shape[-1]
+            if max_samples and samples_collected >= max_samples:
+                break
+        container.close()
+        audio = np.concatenate(frames, axis=-1).flatten().astype(np.float32)
+        if audio.dtype != np.float32 and audio.dtype != np.float64:
+            max_val = np.iinfo(audio.dtype).max
+            audio = audio.astype(np.float32) / max_val
+        if max_samples:
+            audio = audio[:max_samples]
+        return audio, sample_rate
+    except ImportError:
+        pass
+
+    try:
+        import soundfile as sf
+        audio, sample_rate = sf.read(str(fname), dtype='float32')
+        if audio.ndim > 1:
+            audio = audio[:, 0]
+        if max_seconds:
+            max_samples = int(sample_rate * max_seconds)
+            audio = audio[:max_samples]
+        return audio, sample_rate
+    except ImportError:
+        pass
+
+    raise ImportError(
+        "No audio loading backend available. Please install PyAV or soundfile:\n"
+        "  pip install av\n"
+        "or\n"
+        "  pip install soundfile"
+    )
+
 
 class Pipeline:
     default_speaker = torch.tensor(
@@ -36,7 +86,7 @@ class Pipeline:
         -0.8949,  0.0731,  0.0886,  0.3442, -0.1433, -0.6804,  0.2204,  0.1859,
          0.2702,  0.1699, -0.1443, -0.9614,  0.3261,  0.1718,  0.3545, -0.0686]
     )
-    
+
     def __init__(self, t2s_ref=None, s2a_ref=None, optimize=True, torch_compile=False, use_cuda_graph=False, device=None):
         if device is None: device = inference.get_compute_device()
         self.device = device
@@ -78,24 +128,32 @@ class Pipeline:
             self.s2a.reset_cuda_graph()
 
     def extract_spk_emb(self, fname):
-        import torchaudio
         if self.encoder is None:
             device = self.device
             if device == 'mps': device = 'cpu'
-            from speechbrain.pretrained import EncoderClassifier
-            self.encoder = EncoderClassifier.from_hparams("speechbrain/spkrec-ecapa-voxceleb",
-                                                          savedir=expanduser("~/.cache/speechbrain/"),
-                                                          run_opts={"device": device})
-        audio_info = torchaudio.info(fname)
-        actual_sample_rate = audio_info.sample_rate
-        num_frames = actual_sample_rate * 30
-        samples, sr = torchaudio.load(fname, num_frames=num_frames)
-        samples = samples[:, :num_frames]
-        samples = self.encoder.audio_normalizer(samples[0], sr)
+            try:
+                from speechbrain.inference import EncoderClassifier
+            except ImportError:
+                try:
+                    from speechbrain.pretrained import EncoderClassifier
+                except ImportError:
+                    raise ImportError(
+                        "speechbrain is required for speaker embedding extraction.\n"
+                        "Install with: pip install speechbrain"
+                    )
+            self.encoder = EncoderClassifier.from_hparams(
+                "speechbrain/spkrec-ecapa-voxceleb",
+                savedir=expanduser("~/.cache/speechbrain/"),
+                run_opts={"device": device},
+            )
+
+        audio_np, sr = _load_audio(fname, max_seconds=30)
+        samples = torch.tensor(audio_np, dtype=torch.float32)
+        samples = self.encoder.audio_normalizer(samples, sr)
         spk_emb = self.encoder.encode_batch(samples.unsqueeze(0))
-        
+
         return spk_emb[0,0].to(self.device)
-        
+
     def generate_atoks(self, text, speaker=None, lang='en', cps=15, step_callback=None):
         if speaker is None: speaker = self.default_speaker
         elif isinstance(speaker, (str, Path)): speaker = self.extract_spk_emb(speaker)
@@ -103,12 +161,12 @@ class Pipeline:
         stoks = self.t2s.generate(text, cps=cps, lang=lang, step=step_callback)[0]
         atoks = self.s2a.generate(stoks, speaker.unsqueeze(0), step=step_callback)
         return atoks
-        
+
     def generate(self, text, speaker=None, lang='en', cps=15, step_callback=None):
         return self.vocoder.decode(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))
-    
+
     def generate_to_file(self, fname, text, speaker=None, lang='en', cps=15, step_callback=None):
         self.vocoder.decode_to_file(fname, self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=None))
-        
+
     def generate_to_notebook(self, text, speaker=None, lang='en', cps=15, step_callback=None):
         self.vocoder.decode_to_notebook(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=None))
