@@ -397,6 +397,9 @@ class TSARTransformer(nn.Module):
             l.cross_attn.convert_for_eval()
             l.setup_kv_cache(max_batch_size, self.stoks_len, self.ttoks_len)
         self.switch_dtypes(dtype)
+        if use_cuda_graph and not (torch.cuda.is_available() and torch.version.cuda):
+            print("CUDA graphs require an NVIDIA GPU with CUDA. Falling back to standard inference.")
+            use_cuda_graph = False
         self.use_cuda_graph = use_cuda_graph
         if torch_compile:
             self.generate_next = torch.compile(self.generate_next, mode="reduce-overhead", fullgraph=True)
