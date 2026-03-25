@@ -401,6 +401,9 @@ class TSARTransformer(nn.Module):
             print("CUDA graphs require an NVIDIA GPU with CUDA. Falling back to standard inference.")
             use_cuda_graph = False
         self.use_cuda_graph = use_cuda_graph
+        for l in self.decoder.layers:
+            if l.cross_attn is not None:
+                l.cross_attn._in_cuda_graph = use_cuda_graph
         if torch_compile:
             self.generate_next = torch.compile(self.generate_next, mode="reduce-overhead", fullgraph=True)
 

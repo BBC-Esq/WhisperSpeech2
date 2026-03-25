@@ -83,6 +83,7 @@ class MultiHeadAttention(nn.Module):
         self.register_buffer('k_cache', None)
         self.register_buffer('v_cache', None)
         self._cross_cache_ready = False
+        self._in_cuda_graph = False
         
         self.rotary = None
         if rope:
@@ -135,7 +136,7 @@ class MultiHeadAttention(nn.Module):
             q,k,v = self.qkv(qx).split(self.odim, dim=-1)
         elif self.kv:
             q = self.q(qx)
-            if self.k_cache is not None and self.cross and self._cross_cache_ready:
+            if self.k_cache is not None and self.cross and self._cross_cache_ready and not self._in_cuda_graph:
                 q = self.split_heads(q, q_positions, rope=self.rotary, subsampling=self.query_subsampling)
                 k, v = self.k_cache[:q.shape[0]], self.v_cache[:q.shape[0]]
                 if mask is not None:
