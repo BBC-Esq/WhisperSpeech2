@@ -570,7 +570,11 @@ class TSARTransformer(nn.Module):
             self._capture_cuda_graph()
         elif self.use_cuda_graph and self.cuda_graph_warmup_done:
             self._update_static_buffers(xenc, xenc_positions, cps_emb)
-        
+
+        for layer in self.decoder.layers:
+            if layer.cross_attn is not None:
+                layer.cross_attn._cross_cache_ready = False
+
         toks[:,start+1] = self.generate_one(toks[:,:start+1].contiguous(), toks_positions[:start+1], cps_emb, xenc, xenc_positions, T, top_k)[:,0]
         
         for i in it:

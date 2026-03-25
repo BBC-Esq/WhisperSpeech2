@@ -80,9 +80,9 @@ class MultiHeadAttention(nn.Module):
         self.query_subsampling = 1
         self.key_subsampling = 1
 
-        self.cached_kvx = None
         self.register_buffer('k_cache', None)
         self.register_buffer('v_cache', None)
+        self._cross_cache_ready = False
         
         self.rotary = None
         if rope:
@@ -135,6 +135,13 @@ class MultiHeadAttention(nn.Module):
             q,k,v = self.qkv(qx).split(self.odim, dim=-1)
         elif self.kv:
             q = self.q(qx)
+            if self.k_cache is not None and self.cross and self._cross_cache_ready:
+                q = self.split_heads(q, q_positions, rope=self.rotary, subsampling=self.query_subsampling)
+                k, v = self.k_cache[:q.shape[0]], self.v_cache[:q.shape[0]]
+                if mask is not None:
+                    mask = mask[q_positions,:k.shape[-2]]
+                wv = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0, is_causal=causal)
+                return self.out(wv.permute(0, 2, 1, 3).flatten(start_dim=2))
             k,v = self.kv(kvx).split(self.odim, dim=-1)
         else:
             q,k,v = None,None,None
@@ -146,17 +153,19 @@ class MultiHeadAttention(nn.Module):
         k = self.split_heads(k, kv_positions, rope = self.rotary, subsampling = self.key_subsampling)
         if v is None: v = self.value(kvx)
         v = self.split_heads(v, kv_positions)
-        
+
         if self.k_cache is not None:
             self.k_cache[:k.shape[0],:,kv_positions] = k
             self.v_cache[:v.shape[0],:,kv_positions] = v
             k, v = self.k_cache[:k.shape[0]], self.v_cache[:v.shape[0]]
+            if self.cross and kv_positions.numel() > 1:
+                self._cross_cache_ready = True
 
         if mask is not None:
             mask = mask[q_positions,:k.shape[-2]]
-            
+
         wv = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0, is_causal=causal)
-        
+
         return self.out(wv.permute(0, 2, 1, 3).flatten(start_dim=2))
 
 class ResidualAttentionBlock(nn.Module):
