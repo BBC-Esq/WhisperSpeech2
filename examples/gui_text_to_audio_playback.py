@@ -62,7 +62,7 @@ def play_audio_from_queue(audio_queue):
 
 def start_processing():
     user_input = text_input.get("1.0", "end-1c")
-    sentences = re.split(r'[.!?;]+\s*', user_input)
+    sentences = re.split(r'(?<=[.!?;])\s+', user_input.strip())
     
     while not audio_queue.empty():
         audio_queue.get()

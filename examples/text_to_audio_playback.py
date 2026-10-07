@@ -38,7 +38,7 @@ input_text = """
 This script processes a body of text one sentence at a time and plays them consecutively. This enables the audio playback to begin sooner instead of waiting for the entire body of text to be processed. The script uses the threading and queue modules that are part of the standard Python library. It also uses the sounddevice library, which is fairly reliable across different platforms. I hope you enjoy, and feel free to modify or distribute at your pleasure.
 """
 
-sentences = re.split(r'[.!?;]+\s*', input_text)
+sentences = re.split(r'(?<=[.!?;])\s+', input_text.strip())
 
 audio_queue = queue.Queue()
 
