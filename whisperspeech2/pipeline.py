@@ -17,22 +17,21 @@ def _load_audio(fname, max_seconds=None):
         container = av.open(str(fname))
         stream = container.streams.audio[0]
         sample_rate = stream.rate
+        # decoders return packed (interleaved) or planar arrays in many sample formats, so convert to planar float
+        resampler = av.AudioResampler(format='fltp')
         frames = []
         samples_collected = 0
         max_samples = int(sample_rate * max_seconds) if max_seconds else None
-        for frame in container.decode(audio=0):
-            arr = frame.to_ndarray()
-            if arr.ndim == 2 and arr.shape[0] > 1:
-                arr = arr[0:1]
-            frames.append(arr)
-            samples_collected += arr.shape[-1]
+        for frame in container.decode(stream):
+            for out in resampler.resample(frame):
+                frames.append(out.to_ndarray().mean(axis=0))
+                samples_collected += frames[-1].shape[0]
             if max_samples and samples_collected >= max_samples:
                 break
+        else:
+            frames.extend(out.to_ndarray().mean(axis=0) for out in resampler.resample(None))
         container.close()
-        audio = np.concatenate(frames, axis=-1).flatten().astype(np.float32)
-        if audio.dtype != np.float32 and audio.dtype != np.float64:
-            max_val = np.iinfo(audio.dtype).max
-            audio = audio.astype(np.float32) / max_val
+        audio = np.concatenate(frames).astype(np.float32)
         if max_samples:
             audio = audio[:max_samples]
         return audio, sample_rate
@@ -41,9 +40,8 @@ def _load_audio(fname, max_seconds=None):
 
     try:
         import soundfile as sf
-        audio, sample_rate = sf.read(str(fname), dtype='float32')
-        if audio.ndim > 1:
-            audio = audio[:, 0]
+        audio, sample_rate = sf.read(str(fname), dtype='float32', always_2d=True)
+        audio = audio.mean(axis=1)
         if max_seconds:
             max_samples = int(sample_rate * max_seconds)
             audio = audio[:max_samples]
