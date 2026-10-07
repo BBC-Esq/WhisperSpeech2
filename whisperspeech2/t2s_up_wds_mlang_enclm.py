@@ -438,8 +438,7 @@ class TSARTransformer(nn.Module):
         x = self.decoder(x, toks_positions, xenc, xenc_positions)
         logits = self.embeddings.embedding.unembed(x)
         logits = logits * self.tunables.output_mult / (self.width / self.base_width)
-        logits = logits[:,-1]
-        logits[:,self.embeddings.embedding.codes:] = -torch.inf
+        logits = self._mask_special_tokens(logits[:,-1])
         return self._sample_with_static_noise(logits, T, top_k)
 
     def _capture_cuda_graph(self):
@@ -503,10 +502,17 @@ class TSARTransformer(nn.Module):
     def device(self):
         return next(self.parameters()).device
 
+    def _mask_special_tokens(self, logits):
+        # models saved with padding_token_offset=0 end speech with the first special token, so keep that one
+        codes = self.embeddings.embedding.codes
+        eos = self.stoks_codes + self.tunables.padding_token_offset
+        logits[:,codes:eos] = -torch.inf
+        logits[:,max(codes, eos+1):] = -torch.inf
+        return logits
+
     def generate_one(self, toks, toks_positions, cps_emb, xenc, xenc_positions, T, top_k):
         probs, _ = self(None, None, None, None, toks, in_stoks_positions=toks_positions, loss=None, xenc=xenc, xenc_positions=xenc_positions, cps_emb=cps_emb)
-        probs = probs[:,-1]
-        probs[:,self.embeddings.embedding.codes:] = -torch.inf
+        probs = self._mask_special_tokens(probs[:,-1])
         return inference.sample(probs, T, top_k)
 
     def generate_next(self, *args, **kwargs):
