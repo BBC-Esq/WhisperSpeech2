@@ -62,7 +62,8 @@ class Vocoder:
                 for pkt in stream.encode(None):
                     output.mux(pkt)
             return
-        except ImportError:
+        except Exception:
+            # PyAV may be missing or unable to encode the format (PyAV 19 has no Vorbis encoder for .ogg), so try soundfile
             pass
 
         try:
