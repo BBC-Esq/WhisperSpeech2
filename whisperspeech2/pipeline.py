@@ -141,18 +141,18 @@ SPEAKERS = {
 class Pipeline:
     default_speaker = SPEAKERS["default"]
 
-    def __init__(self, t2s_ref=None, s2a_ref=None, optimize=True, torch_compile=False, use_cuda_graph=False, device=None):
+    def __init__(self, t2s_ref=None, s2a_ref=None, optimize=True, torch_compile=False, use_cuda_graph=False, device=None, cache_dir=None):
         if device is None: device = inference.get_compute_device()
         self.device = device
         self.use_cuda_graph = use_cuda_graph
-        args = dict(device = device)
+        args = dict(device = device, cache_dir = cache_dir)
         if t2s_ref:
             args["ref"] = t2s_ref
         self.t2s = TSARTransformer.load_model(**args)
         if optimize: self.t2s.optimize(torch_compile=torch_compile, use_cuda_graph=use_cuda_graph)
-        args = dict(device = device)
+        args = dict(device = device, cache_dir = cache_dir)
         if s2a_ref:
-            spec = inference.load_model(ref=s2a_ref, device=device)
+            spec = inference.load_model(ref=s2a_ref, device=device, cache_dir=cache_dir)
             if [x for x in spec['state_dict'].keys() if x.startswith('cond_embeddings.')]:
                 cls = s2a_delar_mup_wds_mlang_cond.SADelARTransformer
                 args['spec'] = spec
@@ -164,7 +164,7 @@ class Pipeline:
         self.s2a = cls.load_model(**args)
         if optimize: self.s2a.optimize(torch_compile=torch_compile, use_cuda_graph=use_cuda_graph)
 
-        self.vocoder = Vocoder(device=device)
+        self.vocoder = Vocoder(device=device, cache_dir=cache_dir)
         self.encoder = None
 
     def reset_cuda_graphs(self):

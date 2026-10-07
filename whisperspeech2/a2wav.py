@@ -1,16 +1,29 @@
 __all__ = ['Vocoder']
 
 from vocos import Vocos
+from vocos.feature_extractors import EncodecFeatures
+from huggingface_hub import hf_hub_download
 from whisperspeech2 import inference
 import torch
 import numpy as np
+
+def _load_vocos(repo_id, cache_dir=None):
+    # same steps as Vocos.from_pretrained, which has no cache_dir argument
+    config_path = hf_hub_download(repo_id=repo_id, filename="config.yaml", cache_dir=cache_dir)
+    model_path = hf_hub_download(repo_id=repo_id, filename="pytorch_model.bin", cache_dir=cache_dir)
+    model = Vocos.from_hparams(config_path)
+    state_dict = torch.load(model_path, map_location="cpu")
+    if isinstance(model.feature_extractor, EncodecFeatures):
+        state_dict.update({"feature_extractor.encodec." + k: v for k, v in model.feature_extractor.encodec.state_dict().items()})
+    model.load_state_dict(state_dict)
+    return model.eval()
 
 class Vocoder:
     def __init__(self, repo_id="charactr/vocos-encodec-24khz", device=None, cache_dir=None):
         if device is None: device = inference.get_compute_device()
         if device == 'mps': device = 'cpu'
         self.device = device
-        self.vocos = Vocos.from_pretrained(repo_id).to(device)
+        self.vocos = _load_vocos(repo_id, cache_dir).to(device)
 
     def is_notebook(self):
         try:
