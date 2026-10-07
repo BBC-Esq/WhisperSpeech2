@@ -279,7 +279,11 @@ class SpeakerEmbedding(nn.Module):
         if self.spk_to_hidden: x = self.spk_to_hidden(x.to(self.spk_to_hidden.weight.dtype))
         return x
 
-from webdataset.filters import default_collation_fn
+def _collate(values):
+    if isinstance(values[0], (int, float)): return np.array(values)
+    if isinstance(values[0], torch.Tensor): return torch.stack(values)
+    if isinstance(values[0], np.ndarray): return np.array(values)
+    return list(values)
 
 class SADelARTransformer(nn.Module):
     def __init__(self, depth=3, ctx_n=2250,
@@ -428,8 +432,7 @@ class SADelARTransformer(nn.Module):
 
         cond_embs = torch.zeros((bs,semb.shape[-1]), dtype=semb.dtype, device=semb.device)
         for k in self.cond_embeddings.keys():
-            samples = [(x.get(k, self.cond_embeddings[k].default),) for x in conds]
-            c = default_collation_fn(samples)[0]
+            c = _collate([x.get(k, self.cond_embeddings[k].default) for x in conds])
             if isinstance(c, np.ndarray): c = torch.tensor(c, device=Stoks.device)
             if isinstance(c, torch.Tensor): c = c.to(device=Stoks.device)
             cond_embs += self.cond_embeddings[k](c)
