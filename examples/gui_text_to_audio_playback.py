@@ -60,7 +60,11 @@ def play_audio_from_queue(audio_queue):
         except Exception as e:
             print(f"Error playing audio: {e}")
 
+threads = []
+
 def start_processing():
+    if any(t.is_alive() for t in threads):
+        return
     user_input = text_input.get("1.0", "end-1c")
     sentences = re.split(r'(?<=[.!?;])\s+', user_input.strip())
     
@@ -69,6 +73,7 @@ def start_processing():
     
     processing_thread = threading.Thread(target=process_text_to_audio, args=(sentences, pipe))
     playback_thread = threading.Thread(target=play_audio_from_queue, args=(audio_queue,))
+    threads[:] = [processing_thread, playback_thread]
     
     processing_thread.start()
     playback_thread.start()
