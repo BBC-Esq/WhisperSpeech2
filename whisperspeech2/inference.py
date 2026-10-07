@@ -50,10 +50,11 @@ def compile_step(fn, device, use_cuda_graph=False):
         except ImportError:
             warnings.warn("torch_compile needs Triton, which on Windows is the triton-windows package, so the model runs without it.")
             return fn
-        # PyTorch 2.9's static CUDA launcher overflows a 32-bit C long on Windows
-        import torch._inductor.config as inductor_config
-        if hasattr(inductor_config, 'use_static_cuda_launcher'):
-            inductor_config.use_static_cuda_launcher = False
+        # before PyTorch 2.14 the static CUDA launcher overflows a 32-bit C long on Windows
+        if torch.__version__ < '2.14':
+            import torch._inductor.config as inductor_config
+            if hasattr(inductor_config, 'use_static_cuda_launcher'):
+                inductor_config.use_static_cuda_launcher = False
     return torch.compile(fn, mode="reduce-overhead", fullgraph=True)
 
 def math_attention():
