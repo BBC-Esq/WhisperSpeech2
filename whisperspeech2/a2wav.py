@@ -37,16 +37,17 @@ class Vocoder:
 
         try:
             import av
-            output = av.open(str(fname), mode='w')
-            stream = output.add_stream('pcm_s16le', rate=sample_rate, layout='mono')
-            audio_int16 = (np.clip(audio_np, -1.0, 1.0) * 32767).astype(np.int16)
-            frame = av.AudioFrame.from_ndarray(audio_int16.reshape(1, -1), format='s16', layout='mono')
-            frame.sample_rate = sample_rate
-            for pkt in stream.encode(frame):
-                output.mux(pkt)
-            for pkt in stream.encode(None):
-                output.mux(pkt)
-            output.close()
+            with av.open(str(fname), mode='w') as output:
+                # pcm only fits in wav, so use the default codec of the container picked by the file extension
+                codec = getattr(output, 'default_audio_codec', None) or 'pcm_s16le'
+                stream = output.add_stream(codec, rate=sample_rate, layout='mono')
+                audio_int16 = (np.clip(audio_np, -1.0, 1.0) * 32767).astype(np.int16)
+                frame = av.AudioFrame.from_ndarray(audio_int16.reshape(1, -1), format='s16', layout='mono')
+                frame.sample_rate = sample_rate
+                for pkt in stream.encode(frame):
+                    output.mux(pkt)
+                for pkt in stream.encode(None):
+                    output.mux(pkt)
             return
         except ImportError:
             pass
