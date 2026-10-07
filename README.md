@@ -21,7 +21,7 @@ You can mix and match the models for different quality and compute requirements.
 |-------|-----------|
 | Tiny | `WhisperSpeech/WhisperSpeech:s2a-q4-tiny-en+pl.model` |
 | Base | `WhisperSpeech/WhisperSpeech:s2a-q4-base-en+pl.model` |
-| Small | `WhisperSpeech/WhisperSpeech:s2a-q4-small-en+pl.model` |
+| Small (default) | `WhisperSpeech/WhisperSpeech:s2a-q4-small-en+pl.model` |
 | HQ Fast | `WhisperSpeech/WhisperSpeech:s2a-q4-hq-fast-en+pl.model` |
 | v1.1 Small | `WhisperSpeech/WhisperSpeech:s2a-v1.1-small-en+pl.model` |
 
@@ -34,10 +34,10 @@ You can mix and match the models for different quality and compute requirements.
 | Small | `WhisperSpeech/WhisperSpeech:t2s-small-en+pl.model` |
 | Fast Small | `WhisperSpeech/WhisperSpeech:t2s-fast-small-en+pl.model` |
 | Fast Medium | `WhisperSpeech/WhisperSpeech:t2s-fast-medium-en+pl+yt.model` |
-| HQ Fast | `WhisperSpeech/WhisperSpeech:t2s-hq-fast-en+pl.model` |
+| HQ Fast (default) | `WhisperSpeech/WhisperSpeech:t2s-hq-fast-en+pl.model` |
 | v1.1 Small | `WhisperSpeech/WhisperSpeech:t2s-v1.1-small-en+pl.model` |
 
-> v1.1 Small and HQ Fast never ended a sentence early in testing, while the other T2S models occasionally do.
+> HQ Fast and v1.1 Small never ended a sentence early in testing, while the other T2S models occasionally do. HQ Fast with the Small S2A model also had the best word accuracy and the most consistent voice, so that pair is the default.
 
 ## Benchmark (no cuda graph)
 
