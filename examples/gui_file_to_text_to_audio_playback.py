@@ -27,6 +27,7 @@ from pypdf import PdfReader
 from docx import Document
 import nltk
 nltk.download('punkt')
+nltk.download('punkt_tab')
 from nltk.tokenize import sent_tokenize
 
 main_bg = "#1B2A2F"
