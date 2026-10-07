@@ -9,7 +9,7 @@ pip install whisperspeech2
 ```
 
 > [PyTorch](https://pytorch.org/get-started/locally/)<p>
-> [CUDA](https://developer.nvidia.com/cuda-toolkit-archive) libraries if using an Nvidia GPU (tested with CUDA 12.8).
+> [CUDA](https://developer.nvidia.com/cuda-toolkit-archive) libraries if using an Nvidia GPU (tested with torch 2.9 on CUDA 12.8 and torch 2.14.1 on CUDA 13.0).
 
 ## ✨ Available Models
 
