@@ -179,6 +179,8 @@ class Pipeline:
         if self.encoder is None:
             device = self.device
             if device == 'mps': device = 'cpu'
+            # SpeechBrain warns about a bare "cuda" and wants the device index
+            if device == 'cuda': device = f'cuda:{torch.cuda.current_device()}'
             try:
                 from speechbrain.inference import EncoderClassifier
             except ImportError:
