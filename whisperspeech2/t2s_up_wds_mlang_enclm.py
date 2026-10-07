@@ -12,12 +12,12 @@ from torch.profiler import record_function
 
 from huggingface_hub import hf_hub_download
 from fastcore.basics import store_attr
-from fastprogress import progress_bar
 
 from pathlib import Path
 
 from whisperspeech2.modules import *
 from whisperspeech2 import languages, inference
+from whisperspeech2.inference import progress_bar
 
 import re
 

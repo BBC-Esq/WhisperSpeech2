@@ -16,9 +16,9 @@ from huggingface_hub import hf_hub_download
 
 from pathlib import Path
 import json
-from fastprogress import progress_bar, master_bar
 
 from . import inference
+from .inference import progress_bar
 from .modules import *
 
 def rand(start, end):

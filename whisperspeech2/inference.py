@@ -35,6 +35,11 @@ def load_model(ref=None, spec=None, device='cpu', cache_dir=None):
 def inference_context():
     return nullcontext()
 
+def progress_bar(iterable):
+    from tqdm import tqdm
+    # tqdm writes to stderr, which is None in GUI apps started with pythonw
+    return tqdm(iterable, disable=sys.stderr is None)
+
 def compile_step(fn, device, use_cuda_graph=False):
     if use_cuda_graph:
         warnings.warn("torch_compile is ignored when use_cuda_graph is set because the CUDA graph path never calls the compiled function.")
