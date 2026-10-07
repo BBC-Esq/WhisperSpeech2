@@ -1,5 +1,7 @@
 __all__ = ['get_compute_device']
 
+import os
+import re
 import sys
 import warnings
 import torch
@@ -23,9 +25,15 @@ def get_compute_device():
     if preferred_device is None: preferred_device = get_default_compute_device()
     return preferred_device
 
+def is_hf_ref(ref):
+    # "repo_id:filename" names a Hugging Face file, but a Windows path such as D:\models\t2s.model has a colon too
+    if not isinstance(ref, str) or os.path.exists(ref) or re.match(r"[A-Za-z]:[\\/]", ref):
+        return False
+    return ":" in ref
+
 def load_model(ref=None, spec=None, device='cpu', cache_dir=None):
     if spec is not None: return spec
-    if ":" in ref:
+    if is_hf_ref(ref):
         repo_id, filename = ref.split(":", 1)
         local_filename = hf_hub_download(repo_id=repo_id, filename=filename, cache_dir=cache_dir)
     else:

@@ -347,7 +347,7 @@ class TSARTransformer(nn.Module):
     def load_model(cls, ref="collabora/whisperspeech:t2s-small-en+pl.model",
                    repo_id=None, filename=None, local_filename=None, spec=None, device=None, cache_dir=None):
         if repo_id is None and filename is None and local_filename is None and spec is None:
-            if ":" in ref:
+            if inference.is_hf_ref(ref):
                 repo_id, filename = ref.split(":", 1)
             else:
                 local_filename = ref
