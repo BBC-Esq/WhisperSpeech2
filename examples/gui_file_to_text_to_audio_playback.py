@@ -76,7 +76,7 @@ def process_text_to_audio(sentences, pipe):
     for sentence in sentences:
         if sentence:
             audio_tensor = pipe.generate(sentence, speaker=speaker)
-            audio_np = (audio_tensor.cpu().numpy() * 32767).astype(np.int16)
+            audio_np = (np.clip(audio_tensor.cpu().numpy(), -1.0, 1.0) * 32767).astype(np.int16)
             if len(audio_np.shape) == 1:
                 audio_np = np.expand_dims(audio_np, axis=0)
             else:
