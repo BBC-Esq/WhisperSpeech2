@@ -35,6 +35,9 @@ You can mix and match the models for different quality and compute requirements.
 | Fast Small | `WhisperSpeech/WhisperSpeech:t2s-fast-small-en+pl.model` |
 | Fast Medium | `WhisperSpeech/WhisperSpeech:t2s-fast-medium-en+pl+yt.model` |
 | HQ Fast | `WhisperSpeech/WhisperSpeech:t2s-hq-fast-en+pl.model` |
+| v1.1 Small | `WhisperSpeech/WhisperSpeech:t2s-v1.1-small-en+pl.model` |
+
+> v1.1 Small and HQ Fast never ended a sentence early in testing, while the other T2S models occasionally do.
 
 ## Benchmark (no cuda graph)
 
