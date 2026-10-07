@@ -577,7 +577,8 @@ class TSARTransformer(nn.Module):
 
         if self.use_cuda_graph and not self.cuda_graph_warmup_done:
             self._init_cuda_graph_buffers(bs, xenc, xenc_positions, cps_emb, T, top_k)
-            self._capture_cuda_graph()
+            with inference.math_attention():
+                self._capture_cuda_graph()
         elif self.use_cuda_graph and self.cuda_graph_warmup_done:
             self._update_static_buffers(xenc, xenc_positions, cps_emb)
 

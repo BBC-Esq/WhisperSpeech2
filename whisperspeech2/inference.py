@@ -33,6 +33,14 @@ def load_model(ref=None, spec=None, device='cpu', cache_dir=None):
 def inference_context():
     return nullcontext()
 
+def math_attention():
+    # for single-token decode steps inside a CUDA graph the math SDPA kernel is the fastest one
+    try:
+        from torch.nn.attention import sdpa_kernel, SDPBackend
+        return sdpa_kernel(SDPBackend.MATH)
+    except ImportError:
+        return torch.backends.cuda.sdp_kernel(enable_flash=False, enable_mem_efficient=False, enable_math=True)
+
 def multinomial_sample_one_no_sync(probs_sort):
     q = torch.empty_like(probs_sort).exponential_(1)
     return torch.argmax(probs_sort / q, dim=-1, keepdim=True).to(dtype=torch.int)
