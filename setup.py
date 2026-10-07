@@ -4,7 +4,7 @@ import setuptools, shlex
 assert parse_version(setuptools.__version__)>=parse_version('36.2')
 
 config = ConfigParser(delimiters=['='])
-config.read('settings.ini')
+config.read('settings.ini', encoding='utf-8')
 cfg = config['DEFAULT']
 
 cfg_keys = 'version description keywords author author_email'.split()
@@ -43,7 +43,7 @@ setuptools.setup(
         'speaker': ['speechbrain>=1.0'],
     },
     python_requires  = '>=' + cfg['min_python'],
-    long_description = open('README.md').read(),
+    long_description = open('README.md', encoding='utf-8').read(),
     long_description_content_type = 'text/markdown',
     zip_safe = False,
     **setup_cfg)
