@@ -213,7 +213,7 @@ class Pipeline:
         return self.vocoder.decode(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))
 
     def generate_to_file(self, fname, text, speaker=None, lang='en', cps=15, step_callback=None):
-        self.vocoder.decode_to_file(fname, self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=None))
+        self.vocoder.decode_to_file(fname, self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))
 
     def generate_to_notebook(self, text, speaker=None, lang='en', cps=15, step_callback=None):
-        self.vocoder.decode_to_notebook(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=None))
+        self.vocoder.decode_to_notebook(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))
