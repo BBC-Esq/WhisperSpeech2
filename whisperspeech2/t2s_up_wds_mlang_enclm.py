@@ -477,10 +477,11 @@ class TSARTransformer(nn.Module):
         self.cuda_graph.replay()
         return self.static_output.clone()
 
-    def _update_static_buffers(self, xenc, xenc_positions, cps_emb):
+    def _update_static_buffers(self, xenc, xenc_positions, cps_emb, T):
         self.static_xenc.copy_(xenc)
         self.static_xenc_positions.copy_(xenc_positions)
         self.static_cps_emb.copy_(cps_emb)
+        self.static_T.copy_(T)
 
     def reset_cuda_graph(self):
         self.cuda_graph = None
@@ -575,12 +576,14 @@ class TSARTransformer(nn.Module):
         self.decoder.fill_cross_kv_cache(xenc, xenc_positions)
         toks_positions = torch.arange(N+1, device=dev)
 
+        if self.use_cuda_graph and self.cuda_graph_warmup_done and top_k != self.static_top_k:
+            self.reset_cuda_graph()  # top_k is baked into the captured graph
         if self.use_cuda_graph and not self.cuda_graph_warmup_done:
             self._init_cuda_graph_buffers(bs, xenc, xenc_positions, cps_emb, T, top_k)
             with inference.math_attention():
                 self._capture_cuda_graph()
         elif self.use_cuda_graph and self.cuda_graph_warmup_done:
-            self._update_static_buffers(xenc, xenc_positions, cps_emb)
+            self._update_static_buffers(xenc, xenc_positions, cps_emb, T)
 
         toks[:,start+1] = self.generate_one(toks[:,:start+1].contiguous(), toks_positions[:start+1], cps_emb, xenc, xenc_positions, T, top_k)[:,0]
         

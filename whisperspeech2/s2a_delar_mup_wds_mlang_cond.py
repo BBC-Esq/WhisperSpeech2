@@ -600,9 +600,10 @@ class SADelARTransformer(nn.Module):
         self.cuda_graph.replay()
         return self.static_output.clone()
 
-    def _update_static_buffers(self, xenc, xenc_positions):
+    def _update_static_buffers(self, xenc, xenc_positions, T):
         self.static_xenc.copy_(xenc)
         self.static_xenc_positions.copy_(xenc_positions)
+        self.static_T.copy_(T)
 
     def reset_cuda_graph(self):
         self.cuda_graph = None
@@ -654,12 +655,14 @@ class SADelARTransformer(nn.Module):
         self.decoder.fill_cross_kv_cache(xenc, xenc_positions)
         toks_positions = torch.arange(N, device=dev)
         
+        if self.use_cuda_graph and self.cuda_graph_warmup_done and top_k != self.static_top_k:
+            self.reset_cuda_graph()  # top_k is baked into the captured graph
         if self.use_cuda_graph and not self.cuda_graph_warmup_done:
             self._init_cuda_graph_buffers(bs, xenc, xenc_positions, T, top_k)
             with inference.math_attention():
                 self._capture_cuda_graph(langs)
         elif self.use_cuda_graph and self.cuda_graph_warmup_done:
-            self._update_static_buffers(xenc, xenc_positions)
+            self._update_static_buffers(xenc, xenc_positions, T)
         
         initial = self.generate_one(toks[:,:,:start], toks_positions[:start], langs, xenc, xenc_positions, T, top_k)
         toks[:,:start,start:start+1] = initial[:,:start]
