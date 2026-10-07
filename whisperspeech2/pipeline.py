@@ -145,11 +145,13 @@ class Pipeline:
         if device is None: device = inference.get_compute_device()
         self.device = device
         self.use_cuda_graph = use_cuda_graph
+        # generation needs the inference conversion and KV caches either way, so optimize=False means float32 without graphs or compilation
+        opt_args = dict(torch_compile=torch_compile, use_cuda_graph=use_cuda_graph) if optimize else dict(dtype=torch.float32)
         args = dict(device = device, cache_dir = cache_dir)
         if t2s_ref:
             args["ref"] = t2s_ref
         self.t2s = TSARTransformer.load_model(**args)
-        if optimize: self.t2s.optimize(torch_compile=torch_compile, use_cuda_graph=use_cuda_graph)
+        self.t2s.optimize(**opt_args)
         args = dict(device = device, cache_dir = cache_dir)
         if s2a_ref:
             spec = inference.load_model(ref=s2a_ref, device=device, cache_dir=cache_dir)
@@ -162,7 +164,7 @@ class Pipeline:
         else:
             cls = SADelARTransformer
         self.s2a = cls.load_model(**args)
-        if optimize: self.s2a.optimize(torch_compile=torch_compile, use_cuda_graph=use_cuda_graph)
+        self.s2a.optimize(**opt_args)
 
         self.vocoder = Vocoder(device=device, cache_dir=cache_dir)
         self.encoder = None
