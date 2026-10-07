@@ -459,7 +459,7 @@ class SADelARTransformer(nn.Module):
             use_cuda_graph = False
         self.use_cuda_graph = use_cuda_graph
         if torch_compile:
-            self.generate_next = torch.compile(self.generate_next, mode="reduce-overhead", fullgraph=True)
+            self.generate_next = inference.compile_step(self.generate_next, self.device, use_cuda_graph)
 
     def _sample_with_static_noise(self, logits, T, top_k):
         T_val = T if isinstance(T, torch.Tensor) else torch.tensor(T, device=logits.device)

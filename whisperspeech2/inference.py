@@ -1,5 +1,7 @@
 __all__ = ['get_compute_device']
 
+import sys
+import warnings
 import torch
 import torch.nn.functional as F
 from huggingface_hub import hf_hub_download
@@ -32,6 +34,22 @@ def load_model(ref=None, spec=None, device='cpu', cache_dir=None):
 
 def inference_context():
     return nullcontext()
+
+def compile_step(fn, device, use_cuda_graph=False):
+    if use_cuda_graph:
+        warnings.warn("torch_compile is ignored when use_cuda_graph is set because the CUDA graph path never calls the compiled function.")
+        return fn
+    if device.type == 'cuda' and sys.platform == 'win32':
+        try:
+            import triton
+        except ImportError:
+            warnings.warn("torch_compile needs Triton, which on Windows is the triton-windows package, so the model runs without it.")
+            return fn
+        # PyTorch 2.9's static CUDA launcher overflows a 32-bit C long on Windows
+        import torch._inductor.config as inductor_config
+        if hasattr(inductor_config, 'use_static_cuda_launcher'):
+            inductor_config.use_static_cuda_launcher = False
+    return torch.compile(fn, mode="reduce-overhead", fullgraph=True)
 
 def math_attention():
     # for single-token decode steps inside a CUDA graph the math SDPA kernel is the fastest one
