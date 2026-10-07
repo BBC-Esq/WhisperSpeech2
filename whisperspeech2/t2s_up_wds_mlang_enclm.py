@@ -4,6 +4,7 @@ import dataclasses
 import random
 import math
 import itertools
+import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -549,6 +550,8 @@ class TSARTransformer(nn.Module):
             ttoks = self.tokenizer.encode(txt)
             langs = torch.tensor([languages.to_id(lang)], device=dev)
         ttoks = torch.tensor(ttoks, device=dev)
+        if len(ttoks) > self.ttoks_len - 1:
+            warnings.warn(f"The text is {len(ttoks)} bytes long but T2S reads at most {self.ttoks_len - 1}, so the rest is ignored. Split long text into shorter chunks.")
         ttoks = F.pad(ttoks, (1, self.ttoks_len - len(ttoks) - 1), value=self.tokenizer.eot)
         cpss = torch.tensor([cps], device=dev)
         T = torch.tensor(T, device=dev)
@@ -588,6 +591,7 @@ class TSARTransformer(nn.Module):
             if (toks[:,i+1] == self.stoks_codes+self.tunables.padding_token_offset).all(): return toks[:,1:i+1]
 
             if step is not None: step()
+        warnings.warn(f"T2S hit its {N} token limit (about {N / 25:.0f} seconds) before the end of speech, so the audio is cut off. Split long text into shorter chunks.")
         return toks[:,1:]
 
     @torch.no_grad()
