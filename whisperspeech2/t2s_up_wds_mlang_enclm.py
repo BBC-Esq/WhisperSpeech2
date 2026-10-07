@@ -401,9 +401,6 @@ class TSARTransformer(nn.Module):
             print("CUDA graphs require an NVIDIA GPU with CUDA. Falling back to standard inference.")
             use_cuda_graph = False
         self.use_cuda_graph = use_cuda_graph
-        for l in self.decoder.layers:
-            if l.cross_attn is not None:
-                l.cross_attn._in_cuda_graph = use_cuda_graph
         if torch_compile:
             self.generate_next = torch.compile(self.generate_next, mode="reduce-overhead", fullgraph=True)
 
@@ -438,7 +435,7 @@ class TSARTransformer(nn.Module):
         x = (self.embeddings.embedding(toks) + 
              self.embeddings.positional_embedding[toks_positions] +
              cps_emb).to(xenc[0].dtype)
-        x = self.decoder(x, toks_positions, xenc.clone(), xenc_positions)
+        x = self.decoder(x, toks_positions, xenc, xenc_positions)
         logits = self.embeddings.embedding.unembed(x)
         logits = logits * self.tunables.output_mult / (self.width / self.base_width)
         logits = logits[:,-1]
@@ -566,17 +563,14 @@ class TSARTransformer(nn.Module):
         ttoks = ttoks.repeat(bs, 1)
         langs, cpss = [x.repeat(bs) for x in (langs, cpss)]
         xenc, xenc_positions, cps_emb = self.run_encoder(ttoks, langs, cpss)
+        self.decoder.fill_cross_kv_cache(xenc, xenc_positions)
         toks_positions = torch.arange(N+1, device=dev)
-        
+
         if self.use_cuda_graph and not self.cuda_graph_warmup_done:
             self._init_cuda_graph_buffers(bs, xenc, xenc_positions, cps_emb, T, top_k)
             self._capture_cuda_graph()
         elif self.use_cuda_graph and self.cuda_graph_warmup_done:
             self._update_static_buffers(xenc, xenc_positions, cps_emb)
-
-        for layer in self.decoder.layers:
-            if layer.cross_attn is not None:
-                layer.cross_attn._cross_cache_ready = False
 
         toks[:,start+1] = self.generate_one(toks[:,:start+1].contiguous(), toks_positions[:start+1], cps_emb, xenc, xenc_positions, T, top_k)[:,0]
         

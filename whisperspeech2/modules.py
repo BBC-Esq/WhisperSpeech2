@@ -82,9 +82,7 @@ class MultiHeadAttention(nn.Module):
 
         self.register_buffer('k_cache', None)
         self.register_buffer('v_cache', None)
-        self._cross_cache_ready = False
-        self._in_cuda_graph = False
-        
+
         self.rotary = None
         if rope:
             self.rotary = Rotary(n_state // n_head)
@@ -95,6 +93,13 @@ class MultiHeadAttention(nn.Module):
         cache_shape = (max_batch_size, self.n_head, max_seq_len, self.n_state//self.n_head)
         self.k_cache = torch.zeros(cache_shape, dtype=dtype, device=self.key.weight.device)
         self.v_cache = torch.zeros(cache_shape, dtype=dtype, device=self.value.weight.device)
+
+    def fill_cross_kv_cache(self, kvx, kv_positions):
+        k,v = self.kv(kvx).split(self.odim, dim=-1)
+        k = self.split_heads(k, kv_positions, rope = self.rotary, subsampling = self.key_subsampling)
+        v = self.split_heads(v, kv_positions)
+        self.k_cache[:k.shape[0],:,kv_positions] = k
+        self.v_cache[:v.shape[0],:,kv_positions] = v
 
     def merge_linears(self, layers, mults):
         bias = [x.bias for x in layers if x.bias is not None][0]
@@ -136,12 +141,11 @@ class MultiHeadAttention(nn.Module):
             q,k,v = self.qkv(qx).split(self.odim, dim=-1)
         elif self.kv:
             q = self.q(qx)
-            if self.k_cache is not None and self.cross and self._cross_cache_ready and not self._in_cuda_graph:
+            if self.k_cache is not None:
+                # cross-attention keys/values were computed once per utterance by fill_cross_kv_cache
                 q = self.split_heads(q, q_positions, rope=self.rotary, subsampling=self.query_subsampling)
                 k, v = self.k_cache[:q.shape[0]], self.v_cache[:q.shape[0]]
-                if mask is not None:
-                    mask = mask[q_positions,:k.shape[-2]]
-                wv = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0, is_causal=causal)
+                wv = F.scaled_dot_product_attention(q, k, v, dropout_p=0)
                 return self.out(wv.permute(0, 2, 1, 3).flatten(start_dim=2))
             k,v = self.kv(kvx).split(self.odim, dim=-1)
         else:
@@ -159,8 +163,6 @@ class MultiHeadAttention(nn.Module):
             self.k_cache[:k.shape[0],:,kv_positions] = k
             self.v_cache[:v.shape[0],:,kv_positions] = v
             k, v = self.k_cache[:k.shape[0]], self.v_cache[:v.shape[0]]
-            if self.cross and kv_positions.numel() > 1:
-                self._cross_cache_ready = True
 
         if mask is not None:
             mask = mask[q_positions,:k.shape[-2]]
@@ -224,6 +226,10 @@ class BaseDecoder(nn.Module):
 
         mask = torch.empty(length, length).fill_(-torch.inf).triu_(1)
         self.register_buffer("mask", mask, persistent=False)
+
+    def fill_cross_kv_cache(self, xenc, xenc_positions):
+        for l in self.layers:
+            l.cross_attn.fill_cross_kv_cache(xenc, xenc_positions)
 
     def forward(self, x, x_positions, xenc, xenc_positions):
         for i,l in enumerate(self.layers):

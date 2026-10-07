@@ -645,6 +645,7 @@ class SADelARTransformer(nn.Module):
 
         stoks, speakers = [x.repeat(bs, 1) for x in (stoks, speakers)]
         xenc, xenc_positions, _ = self.run_encoder(stoks, [dict(speaker = s, snr=60, c50=60) for s in speakers])
+        self.decoder.fill_cross_kv_cache(xenc, xenc_positions)
         toks_positions = torch.arange(N, device=dev)
         
         if self.use_cuda_graph and not self.cuda_graph_warmup_done:
