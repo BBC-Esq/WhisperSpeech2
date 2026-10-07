@@ -7,7 +7,6 @@ from whisperspeech2.t2s_up_wds_mlang_enclm import TSARTransformer
 from whisperspeech2.s2a_delar_mup_wds_mlang import SADelARTransformer
 from whisperspeech2.a2wav import Vocoder
 from whisperspeech2 import inference, s2a_delar_mup_wds_mlang_cond
-import traceback
 from pathlib import Path
 
 
@@ -147,31 +146,23 @@ class Pipeline:
         self.device = device
         self.use_cuda_graph = use_cuda_graph
         args = dict(device = device)
-        try:
-            if t2s_ref:
-                args["ref"] = t2s_ref
-            self.t2s = TSARTransformer.load_model(**args)
-            if optimize: self.t2s.optimize(torch_compile=torch_compile, use_cuda_graph=use_cuda_graph)
-        except:
-            print("Failed to load the T2S model:")
-            print(traceback.format_exc())
+        if t2s_ref:
+            args["ref"] = t2s_ref
+        self.t2s = TSARTransformer.load_model(**args)
+        if optimize: self.t2s.optimize(torch_compile=torch_compile, use_cuda_graph=use_cuda_graph)
         args = dict(device = device)
-        try:
-            if s2a_ref:
-                spec = inference.load_model(ref=s2a_ref, device=device)
-                if [x for x in spec['state_dict'].keys() if x.startswith('cond_embeddings.')]:
-                    cls = s2a_delar_mup_wds_mlang_cond.SADelARTransformer
-                    args['spec'] = spec
-                else:
-                    cls = SADelARTransformer
-                    args['spec'] = spec
+        if s2a_ref:
+            spec = inference.load_model(ref=s2a_ref, device=device)
+            if [x for x in spec['state_dict'].keys() if x.startswith('cond_embeddings.')]:
+                cls = s2a_delar_mup_wds_mlang_cond.SADelARTransformer
+                args['spec'] = spec
             else:
                 cls = SADelARTransformer
-            self.s2a = cls.load_model(**args)
-            if optimize: self.s2a.optimize(torch_compile=torch_compile, use_cuda_graph=use_cuda_graph)
-        except:
-            print("Failed to load the S2A model:")
-            print(traceback.format_exc())
+                args['spec'] = spec
+        else:
+            cls = SADelARTransformer
+        self.s2a = cls.load_model(**args)
+        if optimize: self.s2a.optimize(torch_compile=torch_compile, use_cuda_graph=use_cuda_graph)
 
         self.vocoder = Vocoder(device=device)
         self.encoder = None
